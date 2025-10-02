@@ -243,7 +243,17 @@ class MigrationManager:
             cutoff_info += f"  Cutoff Time: {cutoff_status['cutoff_time']}\n"
         cutoff_info += f"  File Path: {cutoff_status['file_path']}\n"
         
-        return report + cutoff_info
+        # Add connection pool information
+        from database import get_connection_pool_status
+        pool_status = get_connection_pool_status()
+        pool_info = f"\n\nConnection Pool Status:\n"
+        pool_info += f"  Status: {pool_status['status']}\n"
+        if pool_status['status'] == 'active':
+            pool_info += f"  Min Connections: {pool_status['min_connections']}\n"
+            pool_info += f"  Max Connections: {pool_status['max_connections']}\n"
+            pool_info += f"  Pool Closed: {pool_status['pool_closed']}\n"
+        
+        return report + cutoff_info + pool_info
     
     def _progress_callback(self, ship_id: str, progress: float, current: int, total: int):
         """Progress callback for migration"""

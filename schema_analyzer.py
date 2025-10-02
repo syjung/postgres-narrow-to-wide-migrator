@@ -13,6 +13,21 @@ class SchemaAnalyzer:
     
     def __init__(self):
         self.value_format_mapping = migration_config.VALUE_FORMAT_MAPPING
+        self.allowed_columns = self._load_allowed_columns()
+    
+    def _load_allowed_columns(self) -> set:
+        """Load allowed columns from column_list.txt"""
+        try:
+            with open('column_list.txt', 'r', encoding='utf-8') as f:
+                columns = {line.strip() for line in f if line.strip()}
+            logger.info(f"✅ Loaded {len(columns)} allowed columns from column_list.txt")
+            return columns
+        except FileNotFoundError:
+            logger.warning("⚠️ column_list.txt not found, using empty allowed columns set")
+            return set()
+        except Exception as e:
+            logger.error(f"❌ Failed to load column_list.txt: {e}")
+            return set()
     
     def analyze_ship_data(self, ship_id: str, sample_minutes: int = 10) -> Dict[str, Any]:
         """
@@ -52,7 +67,7 @@ class SchemaAnalyzer:
         return schema
     
     def _analyze_data_channels(self, sample_data: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-        """Analyze data channels and their value formats"""
+        """Analyze data channels and their value formats (only allowed columns)"""
         channel_analysis = defaultdict(lambda: {
             'value_formats': set(),
             'sample_values': [],
@@ -61,6 +76,12 @@ class SchemaAnalyzer:
         
         for row in sample_data:
             channel_id = row['data_channel_id']
+            
+            # Only analyze channels that are in the allowed columns list
+            if channel_id not in self.allowed_columns:
+                logger.debug(f"⚠️ Skipping channel {channel_id} - not in allowed columns list")
+                continue
+            
             value_format = row['value_format']
             
             if value_format:
@@ -76,6 +97,7 @@ class SchemaAnalyzer:
             analysis['value_formats'] = list(analysis['value_formats'])
             analysis['primary_format'] = self._determine_primary_format(analysis['value_formats'])
         
+        logger.info(f"📊 Analyzed {len(channel_analysis)} channels (filtered from {len(sample_data)} sample records)")
         return dict(channel_analysis)
     
     def _get_sample_value(self, row: Dict[str, Any], value_format: str) -> Any:

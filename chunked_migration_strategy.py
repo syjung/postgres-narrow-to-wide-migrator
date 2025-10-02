@@ -17,6 +17,21 @@ class ChunkedMigrationStrategy:
         self.chunk_size_hours = 24  # 24시간 단위로 청킹
         self.max_chunk_records = 1000000  # 청크당 최대 레코드 수
         self.batch_size = migration_config.batch_size
+        self.allowed_columns = self._load_allowed_columns()
+    
+    def _load_allowed_columns(self) -> set:
+        """Load allowed columns from column_list.txt"""
+        try:
+            with open('column_list.txt', 'r', encoding='utf-8') as f:
+                columns = {line.strip() for line in f if line.strip()}
+            logger.info(f"✅ Loaded {len(columns)} allowed columns from column_list.txt")
+            return columns
+        except FileNotFoundError:
+            logger.warning("⚠️ column_list.txt not found, using empty allowed columns set")
+            return set()
+        except Exception as e:
+            logger.error(f"❌ Failed to load column_list.txt: {e}")
+            return set()
     
     def get_data_chunks(self, ship_id: str, cutoff_time: Optional[datetime] = None) -> Generator[Tuple[datetime, datetime], None, None]:
         """
@@ -31,14 +46,24 @@ class ChunkedMigrationStrategy:
         """
         logger.info(f"Generating data chunks for ship_id: {ship_id}")
         
-        # Get data time range
-        time_range = self._get_data_time_range(ship_id, cutoff_time)
-        if not time_range:
-            logger.warning(f"No data found for ship_id: {ship_id}")
-            return
+        # 간단한 접근법: 고정된 시간 범위로 청크 생성
+        # 실제 데이터가 있는지 확인하지 않고 청크를 생성
+        logger.info("🚀 Using simplified chunk generation (no time range check)")
         
-        start_time, end_time = time_range
-        logger.info(f"Data time range: {start_time} to {end_time}")
+        # 기본 시간 범위 설정 (예: 최근 1년)
+        if cutoff_time:
+            end_time = cutoff_time
+        else:
+            end_time = datetime.now()
+        
+        # 시작 시간을 과거로 설정 (실제 데이터가 있을 가능성이 높은 시점)
+        # 실제 운영 환경에서는 데이터가 과거에 있을 것이므로
+        start_time = end_time - timedelta(days=365)
+        
+        logger.info(f"📅 Processing historical data from {start_time} to {end_time}")
+        logger.info(f"📅 This will cover the past year of data")
+        
+        logger.info(f"📅 Using fixed time range: {start_time} to {end_time}")
         
         # Generate chunks
         current_start = start_time
@@ -50,23 +75,23 @@ class ChunkedMigrationStrategy:
                 end_time
             )
             
-            # Check if chunk has data
-            if self._chunk_has_data(ship_id, current_start, current_end):
-                chunk_count += 1
-                logger.info(f"Chunk {chunk_count}: {current_start} to {current_end}")
-                yield (current_start, current_end)
+            chunk_count += 1
+            logger.info(f"📦 Generated chunk {chunk_count}: {current_start} to {current_end}")
+            yield (current_start, current_end)
             
             current_start = current_end
         
-        logger.info(f"Generated {chunk_count} chunks for ship_id: {ship_id}")
+        logger.info(f"✅ Generated {chunk_count} chunks for ship_id: {ship_id}")
     
     def _get_data_time_range(self, ship_id: str, cutoff_time: Optional[datetime] = None) -> Optional[Tuple[datetime, datetime]]:
         """Get the time range of data for a ship"""
+        logger.info(f"🔍 Getting data time range for ship_id: {ship_id}")
+        logger.info(f"📅 Cutoff time: {cutoff_time}")
+        
+        # 최적화된 쿼리: LIMIT을 사용하여 빠른 샘플링
         query = """
         SELECT 
-            MIN(created_time) as min_time,
-            MAX(created_time) as max_time,
-            COUNT(*) as total_count
+            created_time
         FROM tenant.tbl_data_timeseries 
         WHERE ship_id = %s
         """
@@ -76,25 +101,73 @@ class ChunkedMigrationStrategy:
             query += " AND created_time < %s"
             params.append(cutoff_time)
         
-        result = db_manager.execute_query(query, tuple(params))
+        query += " ORDER BY created_time LIMIT 1"
         
-        if result and result[0]['total_count'] > 0:
-            return (result[0]['min_time'], result[0]['max_time'])
+        logger.info(f"📊 Executing optimized query: {query}")
+        logger.info(f"📊 Query params: {params}")
         
-        return None
+        try:
+            logger.info("🔄 Getting earliest timestamp...")
+            earliest_result = db_manager.execute_query(query, tuple(params))
+            
+            if not earliest_result:
+                logger.warning(f"⚠️ No data found for ship_id: {ship_id}")
+                return None
+            
+            earliest_time = earliest_result[0]['created_time']
+            logger.info(f"📅 Earliest time: {earliest_time}")
+            
+            # 최신 시간도 비슷하게 가져오기
+            latest_query = query.replace("ORDER BY created_time LIMIT 1", "ORDER BY created_time DESC LIMIT 1")
+            logger.info("🔄 Getting latest timestamp...")
+            latest_result = db_manager.execute_query(latest_query, tuple(params))
+            
+            if not latest_result:
+                logger.warning(f"⚠️ No latest data found for ship_id: {ship_id}")
+                return None
+            
+            latest_time = latest_result[0]['created_time']
+            logger.info(f"📅 Latest time: {latest_time}")
+            
+            # Skip count query for performance - just return time range
+            logger.info(f"✅ Found data time range: {earliest_time} to {latest_time}")
+            return (earliest_time, latest_time)
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get data time range for ship_id {ship_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
     
     def _chunk_has_data(self, ship_id: str, start_time: datetime, end_time: datetime) -> bool:
-        """Check if a time chunk has data"""
+        """
+        Check if a time chunk has data using LIMIT 1 for performance
+        
+        ⚠️ OPTIMIZED: Uses LIMIT 1 instead of COUNT(*) for better performance
+        """
+        logger.info(f"🔍 Checking if chunk has data: {ship_id} [{start_time} to {end_time}]")
+        
+        # Use LIMIT 1 instead of COUNT(*) for better performance
         query = """
-        SELECT COUNT(*) as count
+        SELECT 1
         FROM tenant.tbl_data_timeseries 
         WHERE ship_id = %s 
         AND created_time >= %s 
         AND created_time < %s
+        LIMIT 1
         """
         
-        result = db_manager.execute_query(query, (ship_id, start_time, end_time))
-        return result[0]['count'] > 0 if result else False
+        try:
+            logger.info("🔄 Executing optimized chunk data check...")
+            result = db_manager.execute_query(query, (ship_id, start_time, end_time))
+            has_data = len(result) > 0 if result else False
+            logger.info(f"✅ Chunk has data: {has_data}")
+            return has_data
+        except Exception as e:
+            logger.error(f"❌ Failed to check chunk data for {ship_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     def migrate_chunk(self, ship_id: str, start_time: datetime, end_time: datetime, 
                      table_name: str) -> Dict[str, Any]:
@@ -113,12 +186,12 @@ class ChunkedMigrationStrategy:
         logger.info(f"🚀 Starting chunk migration: {ship_id} [{start_time} to {end_time}]")
         
         try:
-            # Step 1: Extract chunk data
+            # Step 1: Extract chunk data (with LIMIT to avoid large queries)
             logger.info(f"📊 Extracting data for chunk: {start_time} to {end_time}")
-            chunk_data = self._extract_chunk_data(ship_id, start_time, end_time)
+            chunk_data = self._extract_chunk_data_safe(ship_id, start_time, end_time)
             
             if not chunk_data:
-                logger.warning(f"⚠️ No data found in chunk: {start_time} to {end_time}")
+                logger.info(f"ℹ️ No data found in chunk: {start_time} to {end_time}")
                 return {
                     'status': 'skipped',
                     'records_processed': 0,
@@ -157,9 +230,24 @@ class ChunkedMigrationStrategy:
                 'error': str(e)
             }
     
-    def _extract_chunk_data(self, ship_id: str, start_time: datetime, end_time: datetime) -> List[Dict[str, Any]]:
-        """Extract data for a specific chunk"""
-        query = """
+    def _extract_chunk_data_safe(self, ship_id: str, start_time: datetime, end_time: datetime) -> List[Dict[str, Any]]:
+        """Extract data for a specific chunk with safe LIMIT and column filtering"""
+        import time
+        
+        logger.info(f"🔍 Starting data extraction for chunk: {ship_id} [{start_time} to {end_time}]")
+        logger.info(f"📊 Query: SELECT from tenant.tbl_data_timeseries WHERE ship_id={ship_id} AND created_time BETWEEN {start_time} AND {end_time}")
+        logger.info(f"🔒 Filtering by allowed columns: {len(self.allowed_columns)} columns")
+        
+        # Create a placeholder for IN clause with allowed columns
+        if not self.allowed_columns:
+            logger.warning("⚠️ No allowed columns found, skipping data extraction")
+            return []
+        
+        # Convert set to list for SQL IN clause
+        allowed_columns_list = list(self.allowed_columns)
+        placeholders = ','.join(['%s'] * len(allowed_columns_list))
+        
+        query = f"""
         SELECT 
             created_time,
             data_channel_id,
@@ -173,11 +261,37 @@ class ChunkedMigrationStrategy:
         WHERE ship_id = %s 
         AND created_time >= %s 
         AND created_time < %s
+        AND data_channel_id IN ({placeholders})
         ORDER BY created_time
-        LIMIT %s
+        LIMIT 10000
         """
         
-        return db_manager.execute_query(query, (ship_id, start_time, end_time, self.max_chunk_records))
+        start_time_query = time.time()
+        logger.info(f"🚀 Executing large table query (this may take time)...")
+        
+        try:
+            # Prepare parameters: ship_id, start_time, end_time, then all allowed columns
+            params = [ship_id, start_time, end_time] + allowed_columns_list
+            result = db_manager.execute_query(query, tuple(params))
+            
+            end_time_query = time.time()
+            execution_time = end_time_query - start_time_query
+            
+            record_count = len(result) if result else 0
+            logger.info(f"✅ Query completed successfully!")
+            logger.info(f"📈 Execution time: {execution_time:.2f} seconds")
+            logger.info(f"📊 Records extracted: {record_count}")
+            
+            if execution_time > 5.0:
+                logger.warning(f"⚠️ Slow query detected: {execution_time:.2f}s execution time")
+            
+            return result
+            
+        except Exception as e:
+            end_time_query = time.time()
+            execution_time = end_time_query - start_time_query
+            logger.error(f"❌ Query failed after {execution_time:.2f} seconds: {e}")
+            raise
     
     def _transform_chunk_to_wide(self, chunk_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Transform chunk data to wide format"""

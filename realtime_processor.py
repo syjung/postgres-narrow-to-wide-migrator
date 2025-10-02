@@ -24,6 +24,23 @@ class RealTimeProcessor:
         self.running = False
         self.cutoff_time: Optional[datetime] = None  # 마이그레이션 완료 시점
         self.dual_write_mode = migration_config.dual_write_mode
+        
+        # Load allowed columns from column_list.txt
+        self.allowed_columns = self._load_allowed_columns()
+    
+    def _load_allowed_columns(self) -> Set[str]:
+        """Load allowed columns from column_list.txt"""
+        try:
+            with open('column_list.txt', 'r', encoding='utf-8') as f:
+                columns = {line.strip() for line in f if line.strip()}
+            logger.info(f"✅ Loaded {len(columns)} allowed columns from column_list.txt")
+            return columns
+        except FileNotFoundError:
+            logger.warning("⚠️ column_list.txt not found, using empty allowed columns set")
+            return set()
+        except Exception as e:
+            logger.error(f"❌ Failed to load column_list.txt: {e}")
+            return set()
     
     def start_processing(self, interval_minutes: int = 1):
         """
@@ -152,12 +169,17 @@ class RealTimeProcessor:
     
     def _get_new_data(self, ship_id: str, cutoff_time: datetime) -> List[Dict[str, Any]]:
         """Get new data since cutoff time"""
+        import time
+        
         # Use migration cutoff time if not specified
         actual_cutoff = cutoff_time if cutoff_time else self.cutoff_time
         
         if not actual_cutoff:
             logger.warning("No cutoff time set, using default 2 minutes ago")
             actual_cutoff = datetime.now() - timedelta(minutes=2)
+        
+        logger.info(f"🔍 Starting real-time data query for ship: {ship_id}")
+        logger.info(f"📊 Query: SELECT from tenant.tbl_data_timeseries WHERE ship_id={ship_id} AND created_time > {actual_cutoff}")
         
         query = """
         SELECT 
@@ -175,7 +197,29 @@ class RealTimeProcessor:
         ORDER BY created_time
         """
         
-        return db_manager.execute_query(query, (ship_id, actual_cutoff))
+        start_time_query = time.time()
+        logger.info(f"🚀 Executing real-time data query (this may take time)...")
+        
+        try:
+            result = db_manager.execute_query(query, (ship_id, actual_cutoff))
+            end_time_query = time.time()
+            execution_time = end_time_query - start_time_query
+            
+            record_count = len(result) if result else 0
+            logger.info(f"✅ Real-time query completed successfully!")
+            logger.info(f"📈 Execution time: {execution_time:.2f} seconds")
+            logger.info(f"📊 New records found: {record_count}")
+            
+            if execution_time > 3.0:
+                logger.warning(f"⚠️ Slow real-time query detected: {execution_time:.2f}s execution time")
+            
+            return result
+            
+        except Exception as e:
+            end_time_query = time.time()
+            execution_time = end_time_query - start_time_query
+            logger.error(f"❌ Real-time query failed after {execution_time:.2f} seconds: {e}")
+            raise
     
     def _process_batch(self, batch_data: List[Dict[str, Any]], table_name: str):
         """Process a batch of data"""
@@ -223,16 +267,20 @@ class RealTimeProcessor:
         # Start with created_time
         row_data = {'created_time': timestamp}
         
-        # Add data for each channel
+        # Add data for each channel (only if column is in allowed list)
         for channel_data in channels:
             channel_id = channel_data['data_channel_id']
             value_format = channel_data['value_format']
             
-            # Check if column exists, add if not
+            # Only process columns that are in the allowed list
+            if channel_id not in self.allowed_columns:
+                logger.debug(f"⚠️ Skipping column {channel_id} - not in allowed columns list")
+                continue
+            
+            # Check if column exists in table, skip if not (don't add new columns)
             if channel_id not in existing_columns:
-                logger.info(f"Adding new column {channel_id} to table {table_name}")
-                table_generator.add_column_to_table(table_name, channel_id, 'text')
-                existing_columns.append(channel_id)
+                logger.warning(f"⚠️ Skipping column {channel_id} - not in table {table_name}")
+                continue
             
             # Get the appropriate value based on format
             value = self._get_value_by_format(channel_data, value_format)
@@ -353,6 +401,11 @@ class RealTimeProcessor:
             'last_processed': max(self.processed_timestamps) if self.processed_timestamps else None,
             'scheduled_jobs': len(schedule.jobs)
         }
+
+
+    def get_data_channels_for_ship(self, ship_id: str) -> List[str]:
+        """Get data channels for a specific ship"""
+        return db_manager.get_data_channels_for_ship(ship_id)
 
 
 # Global real-time processor instance

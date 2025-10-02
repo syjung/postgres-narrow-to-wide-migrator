@@ -37,6 +37,10 @@ class ConcurrentMigrationStrategy:
         logger.info("Starting concurrent migration strategy")
         
         try:
+            # Set backfill running flag
+            self.backfill_running = True
+            logger.info("✅ Backfill running flag set to True")
+            
             # Step 1: Start real-time processing immediately
             logger.info("Step 1: Starting real-time processing...")
             self.migration_start_time = datetime.now()
@@ -48,7 +52,7 @@ class ConcurrentMigrationStrategy:
             realtime_thread = threading.Thread(
                 target=self._start_realtime_processing,
                 args=(interval_minutes,),
-                daemon=True
+                daemon=False  # 데몬 스레드가 아니므로 메인 프로세스 종료 시에도 계속 실행
             )
             realtime_thread.start()
             
@@ -57,7 +61,7 @@ class ConcurrentMigrationStrategy:
             self.backfill_running = True
             self.backfill_thread = threading.Thread(
                 target=self._run_background_backfill,
-                daemon=True
+                daemon=False  # 데몬 스레드가 아니므로 메인 프로세스 종료 시에도 계속 실행
             )
             self.backfill_thread.start()
             

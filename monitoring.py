@@ -179,32 +179,35 @@ class MigrationMonitor:
             for ship_id in ship_ids:
                 table_name = f'tbl_data_timeseries_{ship_id}'
                 if db_manager.check_table_exists(table_name):
-                    count_query = f"SELECT COUNT(*) as count FROM tenant.{table_name}"
-                    result = db_manager.execute_query(count_query)
+                    # Skip slow COUNT(*) query - just check if table has data
+                    check_query = f"SELECT 1 FROM tenant.{table_name} LIMIT 1"
+                    result = db_manager.execute_query(check_query)
+                    has_data = len(result) > 0 if result else False
                     table_stats[ship_id] = {
                         'table_name': table_name,
-                        'record_count': result[0]['count'] if result else 0,
+                        'has_data': has_data,
                         'exists': True
                     }
                 else:
                     table_stats[ship_id] = {
                         'table_name': table_name,
-                        'record_count': 0,
+                        'has_data': False,
                         'exists': False
                     }
             
             # Calculate totals
             total_tables = len(table_stats)
             existing_tables = sum(1 for stats in table_stats.values() if stats['exists'])
-            total_records = sum(stats['record_count'] for stats in table_stats.values())
+            tables_with_data = sum(1 for stats in table_stats.values() if stats.get('has_data', False))
             
             return {
                 'timestamp': datetime.now().isoformat(),
                 'total_ships': len(ship_ids),
                 'total_tables': total_tables,
                 'existing_tables': existing_tables,
-                'total_records': total_records,
-                'table_stats': table_stats
+                'tables_with_data': tables_with_data,
+                'table_stats': table_stats,
+                'message': 'Optimized stats (no count queries)'
             }
             
         except Exception as e:
@@ -215,34 +218,28 @@ class MigrationMonitor:
             }
     
     def get_performance_metrics(self, time_window_hours: int = 24) -> Dict[str, Any]:
-        """Get performance metrics for the specified time window"""
+        """Get performance metrics for the specified time window (optimized)"""
         try:
             cutoff_time = datetime.now() - timedelta(hours=time_window_hours)
             
-            # Get data insertion rate
-            insertion_query = """
-            SELECT 
-                DATE_TRUNC('hour', created_time) as hour,
-                COUNT(*) as records_per_hour
-            FROM tenant.tbl_data_timeseries 
-            WHERE created_time >= %s
-            GROUP BY DATE_TRUNC('hour', created_time)
-            ORDER BY hour
+            # Skip slow GROUP BY query - just check if there's recent data
+            recent_data_query = """
+            SELECT 1 FROM tenant.tbl_data_timeseries 
+            WHERE created_time >= %s LIMIT 1
             """
             
-            insertion_data = db_manager.execute_query(insertion_query, (cutoff_time,))
+            recent_data = db_manager.execute_query(recent_data_query, (cutoff_time,))
+            has_recent_data = len(recent_data) > 0 if recent_data else False
             
-            # Calculate metrics
-            total_records = sum(row['records_per_hour'] for row in insertion_data)
-            avg_per_hour = total_records / max(len(insertion_data), 1)
-            
-            return {
+            # Simple metrics without expensive aggregations
+            metrics = {
                 'timestamp': datetime.now().isoformat(),
                 'time_window_hours': time_window_hours,
-                'total_records': total_records,
-                'avg_records_per_hour': round(avg_per_hour, 2),
-                'hourly_data': insertion_data
+                'has_recent_data': has_recent_data,
+                'message': 'Optimized performance metrics (no GROUP BY queries)'
             }
+            
+            return metrics
             
         except Exception as e:
             logger.error(f"Failed to get performance metrics: {e}")
@@ -282,7 +279,8 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             
             for ship_id, table_stat in stats.get('table_stats', {}).items():
                 status = "✓" if table_stat['exists'] else "✗"
-                report += f"- {ship_id}: {status} ({table_stat['record_count']} records)\n"
+                data_status = "has data" if table_stat.get('has_data', False) else "no data"
+                report += f"- {ship_id}: {status} ({data_status})\n"
             
             return report
             

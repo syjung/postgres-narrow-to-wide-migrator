@@ -70,6 +70,18 @@ start_migration() {
     # Change to project directory
     cd "$PROJECT_DIR"
     
+    # Set PostgreSQL runtime parameters to avoid shared memory issues
+    # These parameters can be changed at runtime without server restart
+    # Optimized for large-scale data migration with limited resources
+    export PGOPTIONS="
+        -c work_mem=32MB
+        -c maintenance_work_mem=128MB
+        -c max_parallel_workers_per_gather=0
+        -c max_parallel_workers=0
+        -c max_parallel_maintenance_workers=0
+        -c random_page_cost=1.1
+    "
+    
     # Start migration in background
     nohup $PYTHON_CMD main.py --mode "$MODE" --interval "$INTERVAL" > "$LOG_FILE" 2>&1 &
     PID=$!

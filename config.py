@@ -52,19 +52,8 @@ class MigrationConfig(BaseSettings):
     }
 
 
-class PostgreSQLConfig(BaseSettings):
-    """PostgreSQL optimization configuration"""
-    work_mem: str = "256MB"
-    maintenance_work_mem: str = "1GB"
-    shared_buffers: str = "4GB"
-    checkpoint_completion_target: float = 0.9
-    random_page_cost: float = 1.1
-    effective_cache_size: str = "8GB"
-    wal_buffers: str = "64MB"
-    
-    class Config:
-        env_prefix = "PG_"
-        case_sensitive = False
+# PostgreSQLConfig removed - using PGOPTIONS in run_migration.sh instead
+# This avoids confusion and ensures consistent runtime parameter settings
 
 
 class LoggingConfig(BaseSettings):
@@ -78,6 +67,5 @@ class LoggingConfig(BaseSettings):
 # Global configuration instances
 db_config = DatabaseConfig()
 migration_config = MigrationConfig()
-postgresql_config = PostgreSQLConfig()
 logging_config = LoggingConfig()
 
