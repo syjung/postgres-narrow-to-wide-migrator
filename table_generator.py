@@ -92,6 +92,10 @@ class TableGenerator:
         else:
             quoted_name = name
         
+        # For data channel columns, use VARCHAR with limited length to reduce row size
+        if data_type == 'text' and name != 'created_time':
+            data_type = 'VARCHAR(255)'  # Limit to 255 characters to reduce row size
+        
         # Format column definition
         col_def = f"    {quoted_name} {data_type}"
         
