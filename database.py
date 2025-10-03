@@ -4,6 +4,7 @@ Database connection and utility functions
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
+import threading
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Generator
 from loguru import logger
@@ -16,11 +17,11 @@ class DatabaseManager:
     def __init__(self):
         self.connection_string = db_config.connection_string
         
-        # Connection pool configuration
+        # Connection pool configuration - thread isolation
         self.pool_config = {
-            'minconn': 2,      # Minimum connections in pool
-            'maxconn': 10,     # Maximum connections in pool
-            'cursor_factory': psycopg2.extras.RealDictCursor
+            'minconn': 8,      # Minimum connections (4x thread count for isolation)
+            'maxconn': 20,     # Maximum connections (increased for better concurrency)
+            'cursor_factory': None  # Use default cursor for better thread safety
         }
         
         self._pool = None
@@ -84,46 +85,83 @@ class DatabaseManager:
     
     @contextmanager
     def get_cursor(self):
-        """Context manager for database cursor using connection pool"""
+        """Context manager for database cursor using connection pool (thread-isolated)"""
         conn = None
         cursor = None
+        thread_id = threading.current_thread().ident
         try:
             conn = self.get_connection()
+            # Set connection to autocommit mode for better thread safety
+            conn.autocommit = True
+            # Ensure each thread gets a fresh cursor
             cursor = conn.cursor()
+            logger.debug(f"🔗 Thread {thread_id}: Fresh cursor created")
             yield cursor
-            conn.commit()
         except Exception as e:
             if conn:
                 conn.rollback()
-            logger.error(f"Database operation failed: {e}")
+            logger.error(f"Database operation failed in thread {thread_id}: {e}")
             raise
         finally:
             if cursor:
                 cursor.close()
+                logger.debug(f"🔗 Thread {thread_id}: Cursor closed")
             if conn:
                 self.return_connection(conn)
+                logger.debug(f"🔗 Thread {thread_id}: Connection returned")
     
     def execute_query(self, query: str, params: Optional[tuple] = None) -> List[Dict[str, Any]]:
-        """Execute SELECT query and return results (optimized with connection pool)"""
+        """Execute SELECT query and return results (thread-safe with default cursor)"""
         import time
         
-        # Log query start for large table queries
+        # Log query start for large table queries (simplified)
         if 'tbl_data_timeseries' in query:
-            logger.info(f"🚀 Starting large table query execution...")
             start_time = time.time()
         
         with self.get_cursor() as cursor:
             cursor.execute(query, params)
-            result = cursor.fetchall()
             
-            # Log query completion for large table queries
+            # Get column names
+            columns = [desc[0] for desc in cursor.description]
+            
+            # Fetch all results and convert to dictionary format
+            rows = cursor.fetchall()
+            result = []
+            
+            # Check for metadata corruption (column names as values)
+            if rows and len(rows) > 0:
+                first_row = rows[0]
+                if hasattr(first_row, '__iter__') and not isinstance(first_row, (str, bytes)):
+                    # Check if the first row contains column names as values
+                    if len(first_row) == len(columns):
+                        is_metadata = True
+                        for i, value in enumerate(first_row):
+                            if i < len(columns) and str(value) != columns[i]:
+                                is_metadata = False
+                                break
+                        
+                        if is_metadata:
+                            logger.error(f"🔍 ERROR: Getting column metadata instead of actual data!")
+                            logger.error(f"🔍 This usually means the query didn't execute properly")
+                            logger.error(f"🔍 Query: {query}")
+                            logger.error(f"🔍 Params: {params}")
+                            raise Exception("Database query returned metadata instead of actual data")
+            
+            # Convert rows to dictionaries
+            for row in rows:
+                row_dict = {}
+                for i, value in enumerate(row):
+                    if i < len(columns):
+                        row_dict[columns[i]] = value
+                result.append(row_dict)
+            
+            # Log query completion for large table queries (simplified)
             if 'tbl_data_timeseries' in query:
                 end_time = time.time()
                 execution_time = end_time - start_time
-                logger.info(f"✅ Large table query completed: {len(result)} rows in {execution_time:.2f}s")
-                
                 if execution_time > 5.0:
                     logger.warning(f"⚠️ Slow query detected: {execution_time:.2f}s execution time")
+                logger.info(f"✅ Large table query completed: {len(result)} rows in {execution_time:.2f}s")
             else:
                 logger.debug(f"📊 Query executed: {len(result)} rows returned")
             
@@ -160,23 +198,132 @@ class DatabaseManager:
         return self.execute_query(query, (table_name,))
     
     def check_table_exists(self, table_name: str) -> bool:
-        """Check if table exists (optimized with connection pool)"""
-        query = """
-        SELECT EXISTS (
-            SELECT FROM information_schema.tables 
-            WHERE table_schema = 'tenant' 
-            AND table_name = %s
-        );
-        """
-        result = self.execute_query(query, (table_name,))
-        exists = result[0]['exists'] if result else False
-        logger.debug(f"🔍 Table check: {table_name} exists={exists}")
-        return exists
+        """Check if table exists using simple approach"""
+        # Convert table name to lowercase for PostgreSQL compatibility
+        table_name_lower = table_name.lower()
+        
+        # Use the simplest possible approach - try to describe the table
+        try:
+            # Get connection directly to avoid error logging in get_cursor
+            conn = self.get_connection()
+            try:
+                conn.autocommit = True
+                cursor = conn.cursor()
+                try:
+                    cursor.execute("SELECT 1 FROM tenant.{} LIMIT 0".format(table_name_lower))
+                    logger.debug(f"🔍 Table check: {table_name} (lowercase: {table_name_lower}) exists=True")
+                    return True
+                finally:
+                    cursor.close()
+            finally:
+                self.return_connection(conn)
+        except Exception as e:
+            logger.debug(f"🔍 Table check: {table_name} (lowercase: {table_name_lower}) exists=False - {e}")
+            return False
     
     def get_distinct_ship_ids(self) -> List[str]:
         """Get target ship IDs from configuration"""
         from config import migration_config
         return migration_config.target_ship_ids
+    
+    def get_wide_table_stats(self) -> Dict[str, Dict[str, Any]]:
+        """Get statistics for all wide tables"""
+        stats = {}
+        ship_ids = self.get_distinct_ship_ids()
+        
+        for ship_id in ship_ids:
+            table_name = f'tbl_data_timeseries_{ship_id.upper()}'
+            table_name_lower = table_name.lower()
+            
+            try:
+                # Check if table exists
+                if not self.check_table_exists(table_name):
+                    stats[ship_id] = {
+                        'exists': False,
+                        'record_count': 0,
+                        'latest_time': None,
+                        'earliest_time': None
+                    }
+                    continue
+                
+                # Get record count and time range
+                query = f"""
+                SELECT 
+                    COUNT(*) as record_count,
+                    MIN(created_time) as earliest_time,
+                    MAX(created_time) as latest_time
+                FROM tenant.{table_name_lower}
+                """
+                
+                result = self.execute_query(query)
+                if result:
+                    row = result[0]
+                    stats[ship_id] = {
+                        'exists': True,
+                        'record_count': row['record_count'],
+                        'latest_time': row['latest_time'],
+                        'earliest_time': row['earliest_time']
+                    }
+                else:
+                    stats[ship_id] = {
+                        'exists': True,
+                        'record_count': 0,
+                        'latest_time': None,
+                        'earliest_time': None
+                    }
+                    
+            except Exception as e:
+                logger.debug(f"Error getting stats for {ship_id}: {e}")
+                stats[ship_id] = {
+                    'exists': False,
+                    'record_count': 0,
+                    'latest_time': None,
+                    'earliest_time': None,
+                    'error': str(e)
+                }
+        
+        return stats
+    
+    def parse_status_logs(self, log_file_path: str) -> Dict[str, Dict[str, Any]]:
+        """Parse status logs to extract work information"""
+        import re
+        from datetime import datetime
+        
+        work_stats = {}
+        
+        try:
+            with open(log_file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # Parse STATUS logs
+            status_pattern = r'STATUS:(REALTIME|BATCH):([^:]+):(\d+):(\d+):([^:]+):(\d+)'
+            
+            for line in lines:
+                match = re.search(status_pattern, line)
+                if match:
+                    process_type = match.group(1)  # REALTIME or BATCH
+                    ship_id = match.group(2)
+                    records = int(match.group(3))
+                    columns = int(match.group(4))
+                    time_range = match.group(5)
+                    affected_rows = int(match.group(6))
+                    
+                    if ship_id not in work_stats:
+                        work_stats[ship_id] = {
+                            'realtime': {'total_records': 0, 'total_columns': 0, 'last_time_range': None, 'operations': 0},
+                            'batch': {'total_records': 0, 'total_columns': 0, 'last_time_range': None, 'operations': 0}
+                        }
+                    
+                    work_stats[ship_id][process_type.lower()]['total_records'] += records
+                    work_stats[ship_id][process_type.lower()]['total_columns'] = columns  # Latest column count
+                    work_stats[ship_id][process_type.lower()]['last_time_range'] = time_range
+                    work_stats[ship_id][process_type.lower()]['operations'] += 1
+            
+            return work_stats
+            
+        except Exception as e:
+            logger.debug(f"Error parsing status logs: {e}")
+            return {}
     
     def get_sample_data(self, ship_id: str, minutes: int = 10) -> List[Dict[str, Any]]:
         """Get sample data for schema analysis (only allowed columns)"""
@@ -210,14 +357,14 @@ class DatabaseManager:
             value_format
         FROM tenant.tbl_data_timeseries 
         WHERE ship_id = %s 
-        AND created_time >= NOW() - INTERVAL '%s minutes'
+        AND created_time >= NOW() - INTERVAL %s
         AND data_channel_id IN ({placeholders})
         ORDER BY created_time DESC
         LIMIT 1000;
         """
         
         # Prepare parameters: ship_id, minutes, then all allowed columns
-        params = [ship_id, minutes] + list(allowed_columns)
+        params = [ship_id, f"{minutes} minutes"] + list(allowed_columns)
         return self.execute_query(query, tuple(params))
     
     def get_data_channels_for_ship(self, ship_id: str) -> List[str]:

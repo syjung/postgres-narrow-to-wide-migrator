@@ -14,8 +14,9 @@ class ChunkedMigrationStrategy:
     """Chunked migration strategy for large-scale data"""
     
     def __init__(self):
-        self.chunk_size_hours = 24  # 24시간 단위로 청킹
-        self.max_chunk_records = 1000000  # 청크당 최대 레코드 수
+        self.chunk_size_hours = migration_config.chunk_size_hours  # Use config setting
+        self.max_chunk_records = migration_config.max_records_per_chunk  # Use config setting
+        self.adaptive_chunking = migration_config.adaptive_chunking  # Use config setting
         self.batch_size = migration_config.batch_size
         self.allowed_columns = self._load_allowed_columns()
     
@@ -82,6 +83,23 @@ class ChunkedMigrationStrategy:
             current_start = current_end
         
         logger.info(f"✅ Generated {chunk_count} chunks for ship_id: {ship_id}")
+    
+    def _adjust_chunk_size_if_needed(self, ship_id: str, chunk_start: datetime, chunk_end: datetime, record_count: int) -> int:
+        """
+        동적으로 청크 크기를 조정합니다.
+        레코드 수가 많으면 다음 청크부터 크기를 줄입니다.
+        """
+        if record_count > self.max_chunk_records:
+            # 현재 청크가 너무 크면 다음 청크부터 크기를 줄임
+            new_chunk_hours = max(6, self.chunk_size_hours // 2)  # 최소 6시간
+            logger.warning(f"⚠️ Chunk too large ({record_count:,} records), reducing next chunk size to {new_chunk_hours}h")
+            return new_chunk_hours
+        elif record_count < self.max_chunk_records // 4:  # 레코드가 적으면 청크 크기 증가
+            new_chunk_hours = min(48, self.chunk_size_hours * 2)  # 최대 48시간
+            logger.info(f"📈 Chunk small ({record_count:,} records), increasing next chunk size to {new_chunk_hours}h")
+            return new_chunk_hours
+        else:
+            return self.chunk_size_hours
     
     def _get_data_time_range(self, ship_id: str, cutoff_time: Optional[datetime] = None) -> Optional[Tuple[datetime, datetime]]:
         """Get the time range of data for a ship"""
@@ -210,7 +228,15 @@ class ChunkedMigrationStrategy:
             logger.info(f"💾 Inserting data in batches of {self.batch_size}...")
             inserted_count = self._insert_chunk_data(table_name, wide_data)
             
-            logger.info(f"🎉 Chunk migration completed: {inserted_count} records inserted")
+            # 📊 상세한 로그 정보
+            data_columns = len(self.allowed_columns)
+            time_range = f"{start_time} ~ {end_time}"
+            
+            logger.info(f"✅ CHUNK MIGRATION SUCCESS: {ship_id}")
+            logger.info(f"   📊 Records processed: {inserted_count}")
+            logger.info(f"   📊 Columns: {data_columns} data columns")
+            logger.info(f"   📊 Time Range: {time_range}")
+            logger.info(f"   📊 Method: Chunked migration (24-hour chunks)")
             
             return {
                 'status': 'completed',
@@ -235,7 +261,6 @@ class ChunkedMigrationStrategy:
         import time
         
         logger.info(f"🔍 Starting data extraction for chunk: {ship_id} [{start_time} to {end_time}]")
-        logger.info(f"📊 Query: SELECT from tenant.tbl_data_timeseries WHERE ship_id={ship_id} AND created_time BETWEEN {start_time} AND {end_time}")
         logger.info(f"🔒 Filtering by allowed columns: {len(self.allowed_columns)} columns")
         
         # Create a placeholder for IN clause with allowed columns
@@ -251,27 +276,27 @@ class ChunkedMigrationStrategy:
         SELECT 
             created_time,
             data_channel_id,
-            COALESCE(
-                CASE WHEN value_format = 'Decimal' THEN double_v::text END,
-                CASE WHEN value_format = 'Integer' THEN long_v::text END,
-                CASE WHEN value_format = 'String' THEN str_v END,
-                CASE WHEN value_format = 'Boolean' THEN bool_v::text END
-            ) as value
+            CASE 
+                WHEN value_format = 'Decimal' THEN double_v::text
+                WHEN value_format = 'Integer' THEN long_v::text
+                WHEN value_format = 'String' THEN str_v
+                WHEN value_format = 'Boolean' THEN bool_v::text
+                ELSE NULL
+            END as value
         FROM tenant.tbl_data_timeseries 
-        WHERE ship_id = %s 
-        AND created_time >= %s 
+        WHERE created_time >= %s 
         AND created_time < %s
+        AND ship_id = %s
         AND data_channel_id IN ({placeholders})
         ORDER BY created_time
-        LIMIT 10000
         """
         
         start_time_query = time.time()
         logger.info(f"🚀 Executing large table query (this may take time)...")
         
         try:
-            # Prepare parameters: ship_id, start_time, end_time, then all allowed columns
-            params = [ship_id, start_time, end_time] + allowed_columns_list
+            # Prepare parameters: start_time, end_time, ship_id, then all allowed columns
+            params = [start_time, end_time, ship_id] + allowed_columns_list
             result = db_manager.execute_query(query, tuple(params))
             
             end_time_query = time.time()
@@ -282,8 +307,23 @@ class ChunkedMigrationStrategy:
             logger.info(f"📈 Execution time: {execution_time:.2f} seconds")
             logger.info(f"📊 Records extracted: {record_count}")
             
-            if execution_time > 5.0:
+            # Check for large chunks and suggest optimization
+            if record_count >= 1000000:  # 1M+ records
+                logger.warning(f"⚠️ Very large chunk detected: {record_count:,} records")
+                logger.warning(f"⚠️ Consider reducing chunk size from 24h to 12h or 6h")
+            elif record_count >= 500000:  # 500K+ records
+                logger.warning(f"⚠️ Large chunk detected: {record_count:,} records")
+                logger.warning(f"⚠️ Consider reducing chunk size if performance degrades")
+            
+            # 성능 분석 및 권장사항
+            if execution_time > 60.0:  # 1분 이상
+                logger.error(f"❌ Very slow query: {execution_time:.2f}s execution time")
+                logger.error(f"❌ Consider: 1) Reduce chunk size to 6-12h, 2) Check database performance")
+            elif execution_time > 30.0:  # 30초 이상
                 logger.warning(f"⚠️ Slow query detected: {execution_time:.2f}s execution time")
+                logger.warning(f"⚠️ Consider reducing chunk size if this persists")
+            elif execution_time > 10.0:  # 10초 이상
+                logger.info(f"📊 Query execution time: {execution_time:.2f}s (acceptable for large chunks)")
             
             return result
             
@@ -362,29 +402,58 @@ class ChunkedMigrationStrategy:
             values_list.append(tuple(values))
         
         # Generate INSERT SQL with conflict handling
-        columns_str = ', '.join([f'"{col}"' if any(c in col for c in ['/', '-', ' ', '.', '(', ')']) else col for col in columns])
+        special_chars = ['/', '-', ' ', '.', '(', ')', '[', ']', '{', '}', '@', '#', '$', '%', '^', '&', '*', '+', '=', '|', '\\', ':', ';', '"', "'", '<', '>', ',', '?', '!', '~', '`']
+        columns_str = ', '.join([f'"{col}"' if any(c in col for c in special_chars) else col for col in columns])
         placeholders = ', '.join(['%s'] * len(columns))
         
         # Create update clause for non-primary key columns
-        update_clause = ', '.join([
-            f'"{col}" = EXCLUDED."{col}"' if any(c in col for c in ['/', '-', ' ', '.', '(', ')']) else f'{col} = EXCLUDED.{col}'
-            for col in columns 
-            if col != 'created_time'
-        ])
+        update_clauses = []
+        for col in columns:
+            if col != 'created_time':
+                quoted_col = f'"{col}"' if any(c in col for c in special_chars) else col
+                update_clauses.append(f'{quoted_col} = EXCLUDED.{quoted_col}')
         
-        insert_sql = f"""
-        INSERT INTO tenant.{table_name} ({columns_str})
-        VALUES ({placeholders})
-        ON CONFLICT (created_time) DO UPDATE SET
-        {update_clause}
-        """
+        # Check if we have any columns to update
+        if not update_clauses:
+            logger.warning(f"No columns to update for {table_name}, using simple INSERT")
+            insert_sql = f"""
+            INSERT INTO tenant.{table_name} ({columns_str})
+            VALUES ({placeholders})
+            ON CONFLICT (created_time) DO NOTHING
+            """
+        else:
+            update_clause = ', '.join(update_clauses)
+            insert_sql = f"""
+            INSERT INTO tenant.{table_name} ({columns_str})
+            VALUES ({placeholders})
+            ON CONFLICT (created_time) DO UPDATE SET
+            {update_clause}
+            """
         
         try:
             affected_rows = db_manager.execute_batch(insert_sql, values_list)
+            
+            # 📊 상세한 로그 정보
+            data_columns = len(columns) - 1  # created_time 제외
+            time_range = f"{min(row['created_time'] for row in batch_data)} ~ {max(row['created_time'] for row in batch_data)}"
+            
+            logger.info(f"✅ BATCH INSERT SUCCESS: {table_name}")
+            logger.info(f"   📊 Records: {len(batch_data)} rows inserted")
+            logger.info(f"   📊 Columns: {data_columns} data columns (total: {len(columns)})")
+            logger.info(f"   📊 Time Range: {time_range}")
+            logger.info(f"   📊 Affected Rows: {affected_rows}")
+            
+            # Status tracking log for check_status.sh
+            ship_id = table_name.split('_')[-1].lower()  # Extract ship_id from table_name
+            logger.info(f"STATUS:BATCH:{ship_id}:{len(batch_data)}:{data_columns}:{time_range}:{affected_rows}")
+            
             return affected_rows
             
         except Exception as e:
-            logger.error(f"Failed to insert batch: {e}")
+            logger.error(f"❌ BATCH INSERT FAILED: {table_name}")
+            logger.error(f"   📊 Records: {len(batch_data)} rows failed")
+            logger.error(f"   📊 Columns: {len(columns)} columns")
+            logger.error(f"   📊 Error: {e}")
             raise
 
 

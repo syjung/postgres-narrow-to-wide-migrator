@@ -16,6 +16,7 @@ from realtime_processor import realtime_processor
 from monitoring import monitor
 from cutoff_time_manager import cutoff_time_manager
 from concurrent_migration_strategy import concurrent_strategy, hybrid_strategy, streaming_strategy
+from parallel_batch_migrator import parallel_batch_migrator
 
 
 class MigrationManager:
@@ -174,9 +175,23 @@ class MigrationManager:
         logger.info(f"Starting dual-write processing with {interval_minutes} minute intervals")
         
         try:
-            # Set cutoff time to current time
-            from datetime import datetime
-            cutoff_time = datetime.now()
+            # Set cutoff time to current DB server time (UTC)
+            logger.info("Getting current DB server time (UTC)...")
+            db_time_result = self.db_manager.execute_query("SELECT NOW() as current_time")
+            if db_time_result and len(db_time_result) > 0:
+                db_time = db_time_result[0]['current_time']
+                # Convert timezone-aware datetime to naive (UTC)
+                if db_time.tzinfo is not None:
+                    cutoff_time = db_time.replace(tzinfo=None)
+                else:
+                    cutoff_time = db_time
+                logger.info(f"DB server time (UTC): {cutoff_time}")
+            else:
+                # Fallback to local time if DB query fails
+                from datetime import datetime
+                cutoff_time = datetime.now()
+                logger.warning(f"Failed to get DB time, using local time: {cutoff_time}")
+            
             self.realtime_processor.set_cutoff_time(cutoff_time)
             
             # Start dual-write mode
@@ -216,6 +231,24 @@ class MigrationManager:
                 'message': 'Failed to start hybrid migration'
             }
     
+    def start_parallel_batch_migration(self, cutoff_time: Optional[datetime] = None) -> Dict[str, Any]:
+        """Start parallel batch migration for all ships"""
+        logger.info("Starting parallel batch migration")
+        
+        try:
+            # Use parallel batch migrator
+            result = parallel_batch_migrator.migrate_all_ships_parallel(cutoff_time)
+            
+            logger.info("Parallel batch migration completed")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Parallel batch migration failed: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
     def start_streaming_migration(self, interval_minutes: int = 1) -> Dict[str, Any]:
         """Start streaming migration strategy"""
         logger.info(f"Starting streaming migration with {interval_minutes} minute intervals")
@@ -288,7 +321,7 @@ def main():
     
     parser.add_argument('--mode', choices=[
         'full', 'schema-only', 'tables-only', 'migration-only', 'realtime', 'dual-write', 
-        'concurrent', 'hybrid', 'streaming', 'status'
+        'concurrent', 'hybrid', 'streaming', 'parallel-batch', 'status'
     ], default='full', help='Migration mode')
     
     parser.add_argument('--cutoff-time', type=str, 
@@ -351,6 +384,10 @@ def main():
         elif args.mode == 'streaming':
             result = migration_manager.start_streaming_migration(args.interval)
             print(f"Streaming migration started: {result['status']}")
+            
+        elif args.mode == 'parallel-batch':
+            result = migration_manager.start_parallel_batch_migration(cutoff_time)
+            print(f"Parallel batch migration completed: {result['total_records_processed']} records processed")
             
         elif args.mode == 'status':
             report = migration_manager.get_status_report()
