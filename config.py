@@ -45,7 +45,7 @@ class MigrationConfig(BaseSettings):
     #target_ship_ids: List[str] = ["IMO9999993", "IMO9999994"]
 
     # AZURE서버
-    target_ship_ids: List[str] = ["imo9976903", "imo9976915","imo9976927","imo9976939","imo9986051","imo9986063","imo9986087","imo9986104"]
+    target_ship_ids: List[str] = ["IMO9976903", "IMO9976915","IMO9976927","IMO9976939","IMO9986051","IMO9986063","IMO9986087","IMO9986104"]
     
     # Performance optimization settings
     parallel_workers: int = 8  # Maximum thread limit, actual threads = min(ship_count, parallel_workers)
@@ -57,7 +57,7 @@ class MigrationConfig(BaseSettings):
     cutoff_time_file: str = "migration_cutoff_time.txt"
     
     # Chunked migration settings
-    chunk_size_hours: int = 24  # Default chunk size (can be reduced for high-volume periods)
+    chunk_size_hours: int = 6  # Default chunk size (can be reduced for high-volume periods)
     max_records_per_chunk: int = 1000000  # Threshold for chunk size reduction
     adaptive_chunking: bool = True  # Enable dynamic chunk size adjustment
     
