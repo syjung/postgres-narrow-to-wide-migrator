@@ -9,12 +9,21 @@ from typing import ClassVar
 
 class DatabaseConfig(BaseSettings):
     """Database connection configuration"""
-    host: str = "222.99.122.73"
-    port: int = 25432
+    # 시흥육상서버
+    # host: str = "222.99.122.73"
+    # port: int = 25432
+    # database: str = "tenant_builder"
+    # user: str = "tapp"
+    # password: str = "tapp.123"
+
+    """Database connection configuration"""
+    # AZURE서버
+    host: str = "20.249.68.82"
+    port: int = 5432
     database: str = "tenant_builder"
     user: str = "tapp"
     password: str = "tapp.123"
-    
+
     class Config:
         env_prefix = "DB_"
         case_sensitive = False
@@ -32,16 +41,25 @@ class MigrationConfig(BaseSettings):
     chunk_size: int = 1000
     
     # Target ships configuration
-    target_ship_ids: List[str] = ["IMO9999993", "IMO9999994"]
+    # 시흥육상서버
+    #target_ship_ids: List[str] = ["IMO9999993", "IMO9999994"]
+
+    # AZURE서버
+    target_ship_ids: List[str] = ["imo9976903", "imo9976915","imo9976927","imo9976939","imo9986051","imo9986063","imo9986087","imo9986104"]
     
     # Performance optimization settings
-    parallel_workers: int = 4
+    parallel_workers: int = 8  # Maximum thread limit, actual threads = min(ship_count, parallel_workers)
     postgresql_optimization: bool = True
     dual_write_mode: bool = False
     rollback_enabled: bool = True
     
     # Cutoff time persistence
     cutoff_time_file: str = "migration_cutoff_time.txt"
+    
+    # Chunked migration settings
+    chunk_size_hours: int = 24  # Default chunk size (can be reduced for high-volume periods)
+    max_records_per_chunk: int = 1000000  # Threshold for chunk size reduction
+    adaptive_chunking: bool = True  # Enable dynamic chunk size adjustment
     
     # Value format mapping
     VALUE_FORMAT_MAPPING: ClassVar[dict] = {

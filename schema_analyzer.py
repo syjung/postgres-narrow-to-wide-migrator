@@ -55,7 +55,7 @@ class SchemaAnalyzer:
         # Generate schema
         schema = {
             'ship_id': ship_id,
-            'table_name': f'tbl_data_timeseries_{ship_id}',
+            'table_name': f'tbl_data_timeseries_{ship_id.upper()}',  # Force uppercase for consistency
             'columns': self._generate_column_definitions(channel_analysis),
             'primary_key': 'created_time',
             'indexes': ['created_time'],
@@ -151,7 +151,7 @@ class SchemaAnalyzer:
         """Create empty schema when no sample data is available"""
         return {
             'ship_id': ship_id,
-            'table_name': f'tbl_data_timeseries_{ship_id}',
+            'table_name': f'tbl_data_timeseries_{ship_id.upper()}',  # Force uppercase for consistency
             'columns': [
                 {
                     'name': 'created_time',

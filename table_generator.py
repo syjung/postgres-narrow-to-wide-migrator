@@ -13,19 +13,19 @@ class TableGenerator:
     def __init__(self):
         self.schema_analyzer = schema_analyzer
     
-    def generate_table(self, schema: Dict[str, Any], drop_if_exists: bool = False) -> bool:
+    def generate_table(self, ship_id: str, schema: Dict[str, Any], drop_if_exists: bool = False) -> bool:
         """
         Generate a wide table based on schema
         
         Args:
+            ship_id: Ship ID for the table
             schema: Schema information from SchemaAnalyzer
             drop_if_exists: Whether to drop table if it already exists
             
         Returns:
             True if successful, False otherwise
         """
-        table_name = schema['table_name']
-        ship_id = schema['ship_id']
+        table_name = schema['table_name'].lower()  # Ensure lowercase for PostgreSQL compatibility
         
         logger.info(f"Generating table: {table_name} for ship_id: {ship_id}")
         

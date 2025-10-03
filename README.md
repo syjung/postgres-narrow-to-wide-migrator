@@ -50,6 +50,71 @@ python run_tests.py --type all
 # HTML 리포트는 htmlcov/index.html에서 확인 가능
 ```
 
+## 빠른 시작
+
+### 방법 1: 실시간/배치 분리 실행 (권장)
+
+#### 실시간 데이터 처리
+```bash
+# 실시간 데이터 처리 시작
+./start_realtime.sh
+
+# 실시간 처리 중지
+./stop_realtime.sh
+
+# 실시간 로그 확인
+./view_logs.sh -f realtime
+```
+
+#### 배치 마이그레이션
+```bash
+# 배치 마이그레이션 시작 (과거 데이터 처리 후 종료)
+./start_batch.sh batch
+
+# 동시 실행 (배치 + 실시간, 계속 실행)
+./start_batch.sh concurrent
+
+# 배치 마이그레이션 중지
+./stop_batch.sh
+
+# 배치 로그 확인
+./view_logs.sh -f batch
+```
+
+### 방법 2: 기존 통합 실행
+
+```bash
+# 전체 마이그레이션 (스키마 분석 + 테이블 생성 + 데이터 마이그레이션)
+python main.py --mode full
+
+# 단계별 실행
+python main.py --mode schema-only    # 스키마 분석만
+python main.py --mode table-only    # 테이블 생성만
+python main.py --mode migration-only # 데이터 마이그레이션만
+python main.py --mode realtime-only  # 실시간 처리만
+
+# 실시간 처리 간격 조정 (기본값: 1분)
+python main.py --mode realtime --interval 5
+
+# 특정 선박만 처리
+python main.py --mode full --ship-id IMO9976903
+```
+
+### 모니터링
+```bash
+# 모든 로그 팔로우
+./view_logs.sh -f all
+
+# 에러 메시지만 확인
+./view_logs.sh -e
+
+# 성공 메시지만 확인
+./view_logs.sh -s
+
+# 로그 통계
+./view_logs.sh -c
+```
+
 ### 3. 데이터베이스 설정
 
 `config.py` 파일에서 데이터베이스 연결 정보를 확인하거나 수정합니다:
@@ -165,12 +230,22 @@ postgres-narrow-to-wide-migrator/
 ├── column_list.txt                  # 대상 컬럼 목록
 ├── migration_cutoff_time.txt        # cutoff_time 저장 파일
 ├── README.md                        # 프로젝트 문서
-├── PRD.md                           # 제품 요구사항 문서
-├── prompt.md                        # 초기 요구사항 문서
-├── migration_optimization_plan.md   # 마이그레이션 최적화 계획서
-├── large_scale_realtime_migration_strategy.md  # 대용량 실시간 마이그레이션 전략
-├── migration_execution_guide.md      # 마이그레이션 실행 가이드
-├── project_improvement_plan.md       # 프로젝트 개선 계획
+├── docs/                            # 프로젝트 문서 디렉토리
+│   ├── PRD.md                       # 제품 요구사항 문서
+│   ├── MIGRATION_STRATEGY.md         # 마이그레이션 전략 및 방법론
+│   ├── OPERATION_GUIDE.md           # 운영 가이드 (스크립트 사용법)
+│   └── prompt.md                    # 프로젝트 초기 요구사항 및 프롬프트
+├── start_realtime.sh                # 실시간 데이터 처리 시작
+├── start_batch.sh                   # 배치 마이그레이션 시작
+├── stop_realtime.sh                 # 실시간 데이터 처리 중지
+├── stop_batch.sh                    # 배치 마이그레이션 중지
+├── check_status.sh                  # 마이그레이션 상태 확인 스크립트
+├── view_logs.sh                     # 로그 확인 스크립트 (실시간/배치 분리)
+├── legacy/                          # 레거시 스크립트들
+│   ├── README.md                    # 레거시 스크립트 설명
+│   ├── run_migration.sh             # 기존 통합 마이그레이션 (레거시)
+│   ├── stop_migration.sh            # 기존 마이그레이션 중지 (레거시)
+│   └── restart_migration.sh         # 기존 마이그레이션 재시작 (레거시)
 └── tests/                           # 테스트 파일들
     ├── __init__.py
     ├── conftest.py                  # pytest 설정 및 공통 fixtures

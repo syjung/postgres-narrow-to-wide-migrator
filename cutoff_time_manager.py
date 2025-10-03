@@ -50,6 +50,11 @@ class CutoffTimeManager:
             with open(self.cutoff_time_file, 'r') as f:
                 cutoff_str = f.read().strip()
             
+            # Check if file is empty or contains only whitespace
+            if not cutoff_str:
+                logger.info("Cutoff time file is empty")
+                return None
+            
             cutoff_time = datetime.fromisoformat(cutoff_str)
             logger.info(f"Cutoff time loaded: {cutoff_time}")
             return cutoff_time

@@ -413,21 +413,39 @@ class UltraFastMigrator:
             special_chars = ['/', '-', ' ', '.', '(', ')', '[', ']', '{', '}', '@', '#', '$', '%', '^', '&', '*', '+', '=', '|', '\\', ':', ';', '"', "'", '<', '>', ',', '?', '!', '~', '`']
             update_clauses = []
             for col in self.target_columns:
-                if any(c in col for c in special_chars):
-                    update_clauses.append(f'"{col}" = EXCLUDED."{col}"')
-                else:
-                    update_clauses.append(f'{col} = EXCLUDED.{col}')
+                quoted_col = f'"{col}"' if any(c in col for c in special_chars) else col
+                update_clauses.append(f'{quoted_col} = EXCLUDED.{quoted_col}')
             
-            insert_sql = f"""
-            INSERT INTO tenant.{table_name} 
-            SELECT * FROM {temp_table}
-            ON CONFLICT (created_time) DO UPDATE SET
-            {', '.join(update_clauses)}
-            """
+            # Check if we have any columns to update
+            if not update_clauses:
+                logger.warning(f"No columns to update for {table_name}, using simple INSERT")
+                insert_sql = f"""
+                INSERT INTO tenant.{table_name} 
+                SELECT * FROM {temp_table}
+                ON CONFLICT (created_time) DO NOTHING
+                """
+            else:
+                insert_sql = f"""
+                INSERT INTO tenant.{table_name} 
+                SELECT * FROM {temp_table}
+                ON CONFLICT (created_time) DO UPDATE SET
+                {', '.join(update_clauses)}
+                """
             cursor.execute(insert_sql)
         
-        logger.info(f"Inserted {len(csv_data)} records using COPY FROM with conflict handling")
-        return len(csv_data)
+            logger.info(f"Inserted {len(csv_data)} records using COPY FROM with conflict handling")
+            
+            # 📊 상세한 로그 정보
+            data_columns = len(self.target_columns)
+            time_range = f"{min(row['created_time'] for row in wide_data)} ~ {max(row['created_time'] for row in wide_data)}"
+            
+            logger.info(f"✅ ULTRA-FAST INSERT SUCCESS: {table_name}")
+            logger.info(f"   📊 Records: {len(csv_data)} rows inserted")
+            logger.info(f"   📊 Columns: {data_columns} data columns (total: {data_columns + 1})")
+            logger.info(f"   📊 Time Range: {time_range}")
+            logger.info(f"   📊 Method: PostgreSQL COPY FROM (optimized)")
+            
+            return len(csv_data)
     
     def _get_migration_count(self, ship_id: str, cutoff_time: Optional[datetime] = None) -> int:
         """
