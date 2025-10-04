@@ -89,15 +89,26 @@ class DataMigrator:
             
             self.migration_stats['end_time'] = datetime.now()
             
-            # Save cutoff time for real-time processing
+            # Save cutoff time for real-time processing (ship-specific)
             if cutoff_time:
+                # Save global cutoff time for backward compatibility
                 cutoff_time_manager.save_cutoff_time(cutoff_time)
-                logger.info(f"Cutoff time saved for real-time processing: {cutoff_time}")
+                logger.info(f"Global cutoff time saved: {cutoff_time}")
+                
+                # Save ship-specific cutoff times
+                for ship_id in migration_results:
+                    cutoff_time_manager.save_ship_cutoff_time(ship_id, cutoff_time)
+                    logger.debug(f"Ship cutoff time saved for {ship_id}: {cutoff_time}")
             else:
                 # Use current time as cutoff if not specified
                 current_cutoff = datetime.now()
                 cutoff_time_manager.save_cutoff_time(current_cutoff)
-                logger.info(f"Cutoff time set to current time: {current_cutoff}")
+                logger.info(f"Global cutoff time set to current time: {current_cutoff}")
+                
+                # Save ship-specific cutoff times
+                for ship_id in migration_results:
+                    cutoff_time_manager.save_ship_cutoff_time(ship_id, current_cutoff)
+                    logger.debug(f"Ship cutoff time saved for {ship_id}: {current_cutoff}")
             
             # Generate summary
             summary = self._generate_migration_summary(migration_results)

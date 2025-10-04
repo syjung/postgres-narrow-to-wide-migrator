@@ -14,6 +14,7 @@ from table_generator import table_generator
 from schema_analyzer import schema_analyzer
 from config import migration_config
 from cutoff_time_manager import cutoff_time_manager
+from thread_logger import get_ship_thread_logger
 
 
 class RealTimeProcessor:
@@ -220,18 +221,17 @@ class RealTimeProcessor:
     
     def _process_ship_data_safe(self, ship_id: str) -> Dict[str, Any]:
         """Thread-safe wrapper for ship data processing with thread info"""
-        thread_id = threading.current_thread().ident
-        thread_name = threading.current_thread().name
+        thread_logger = get_ship_thread_logger(ship_id)
         
-        logger.info(f"🚢 [Thread-{thread_id}] Starting processing for ship: {ship_id}")
+        thread_logger.info(f"🚢 Starting processing for ship: {ship_id}")
         
         try:
             start_time = time.time()
-            self._process_ship_data(ship_id)
+            self._process_ship_data(ship_id, thread_logger)
             end_time = time.time()
             
             processing_time = end_time - start_time
-            logger.info(f"✅ [Thread-{thread_id}] Completed processing for ship: {ship_id} in {processing_time:.2f}s")
+            thread_logger.success(f"Completed processing for ship: {ship_id} in {processing_time:.2f}s")
             
             return {
                 'success': True,
@@ -241,24 +241,27 @@ class RealTimeProcessor:
             }
             
         except Exception as e:
-            logger.error(f"❌ [Thread-{thread_id}] Error processing ship {ship_id}: {e}")
+            thread_logger.error(f"Error processing ship {ship_id}: {e}")
             return {
                 'success': False,
                 'ship_id': ship_id,
                 'error': str(e)
             }
     
-    def _process_ship_data(self, ship_id: str):
+    def _process_ship_data(self, ship_id: str, thread_logger=None):
         """Process new data for a specific ship"""
+        if thread_logger is None:
+            thread_logger = get_ship_thread_logger(ship_id)
+            
         table_name = f'tbl_data_timeseries_{ship_id.upper()}'  # Force uppercase for consistency
         
         # STEP 1: Ensure table exists (regardless of data availability)
         if not db_manager.check_table_exists(table_name):
-            logger.info(f"Table {table_name} does not exist, creating it")
-            self._create_table_for_ship(ship_id)
-            logger.info(f"✅ Table {table_name} created successfully")
+            thread_logger.info(f"Table {table_name} does not exist, creating it")
+            self._create_table_for_ship(ship_id, thread_logger)
+            thread_logger.success(f"Table {table_name} created successfully")
         else:
-            logger.debug(f"Table {table_name} already exists")
+            thread_logger.debug(f"Table {table_name} already exists")
         
         # STEP 2: Process data (only if data exists)
         # Get the last processed time for this ship
@@ -272,35 +275,42 @@ class RealTimeProcessor:
         else:
             # Fallback: use 5 minutes ago to ensure we don't miss data
             cutoff_time = datetime.now() - timedelta(minutes=5)
-            logger.warning(f"No cutoff time found for {ship_id}, using 5 minutes ago: {cutoff_time}")
+            thread_logger.warning(f"No cutoff time found for {ship_id}, using 5 minutes ago: {cutoff_time}")
         
-        logger.info(f"🔍 Processing data for {ship_id} since {cutoff_time}")
+        thread_logger.info(f"🔍 Processing data for {ship_id} since {cutoff_time}")
         
         # Get new data since cutoff time
-        new_data = self._get_new_data(ship_id, cutoff_time)
+        new_data = self._get_new_data(ship_id, cutoff_time, thread_logger)
         
         if not new_data:
-            logger.info(f"📊 No new data found for {ship_id} - table ready for future data")
+            thread_logger.info(f"📊 No new data found for {ship_id} - table ready for future data")
             return
         
-        logger.info(f"Processing {len(new_data)} new records for ship_id: {ship_id}")
+        thread_logger.info(f"Processing {len(new_data)} new records for ship_id: {ship_id}")
         
         # Process data in batches
         for batch in self._chunk_data(new_data, self.batch_size):
-            self._process_batch(batch, table_name)
+            self._process_batch(batch, table_name, thread_logger)
         
         # Update last processed time to the latest record's timestamp
         if new_data:
             latest_timestamp = max(record['created_time'] for record in new_data)
             self._update_last_processed_time(ship_id, latest_timestamp)
-            logger.info(f"✅ Updated last processed time for {ship_id}: {latest_timestamp}")
+            thread_logger.info(f"✅ Updated last processed time for {ship_id}: {latest_timestamp}")
     
     def _get_last_processed_time(self, ship_id: str) -> Optional[datetime]:
         """Get the last processed timestamp for a ship"""
-        # Check if we have a cutoff time file
-        cutoff_time = cutoff_time_manager.load_cutoff_time()
-        if cutoff_time:
-            return cutoff_time
+        # Check if we have a ship-specific cutoff time file
+        ship_cutoff_time = cutoff_time_manager.load_ship_cutoff_time(ship_id)
+        if ship_cutoff_time:
+            logger.debug(f"Using ship-specific cutoff time for {ship_id}: {ship_cutoff_time}")
+            return ship_cutoff_time
+        
+        # Fallback: Check global cutoff time (for backward compatibility)
+        global_cutoff_time = cutoff_time_manager.load_cutoff_time()
+        if global_cutoff_time:
+            logger.debug(f"Using global cutoff time for {ship_id}: {global_cutoff_time}")
+            return global_cutoff_time
         
         # Try to get the latest timestamp from the target table
         table_name = f'tbl_data_timeseries_{ship_id}'
@@ -311,7 +321,9 @@ class RealTimeProcessor:
             """
             result = db_manager.execute_query(query)
             if result and result[0]['latest_time']:
-                return result[0]['latest_time']
+                latest_time = result[0]['latest_time']
+                logger.debug(f"Using latest timestamp from table for {ship_id}: {latest_time}")
+                return latest_time
         except Exception as e:
             logger.debug(f"Could not get last processed time for {ship_id}: {e}")
         
@@ -321,24 +333,30 @@ class RealTimeProcessor:
         """Update the last processed timestamp for a ship (thread-safe)"""
         from cutoff_time_strategy import cutoff_strategy
         
-        # Thread-safe cutoff time update
+        # Thread-safe cutoff time update - now ship-specific
         with self.cutoff_lock:
+            # Save ship-specific cutoff time
+            cutoff_time_manager.save_ship_cutoff_time(ship_id, timestamp)
+            
+            # Also update global cutoff time for backward compatibility
             cutoff_time_manager.save_cutoff_time(timestamp)
             
             # Mark the target minute as processed
             window = cutoff_strategy.get_processing_window()
             cutoff_strategy.mark_minute_processed(window['target_minute'])
             
-            logger.debug(f"Updated cutoff time to {timestamp} for ship {ship_id}")
+            logger.debug(f"Updated ship cutoff time to {timestamp} for ship {ship_id}")
+            logger.debug(f"Updated global cutoff time to {timestamp}")
             logger.debug(f"Marked minute {window['target_minute']} as processed")
     
-    def _get_new_data(self, ship_id: str, cutoff_time: datetime) -> List[Dict[str, Any]]:
+    def _get_new_data(self, ship_id: str, cutoff_time: datetime, thread_logger=None) -> List[Dict[str, Any]]:
         """Get new data since cutoff time (optimized for minute-based batch processing)"""
         import time
         import threading
         from cutoff_time_strategy import cutoff_strategy
         
-        thread_id = threading.current_thread().ident
+        if thread_logger is None:
+            thread_logger = get_ship_thread_logger(ship_id)
         
         # Use migration cutoff time if not specified, otherwise use optimized strategy
         if cutoff_time:
@@ -348,7 +366,7 @@ class RealTimeProcessor:
             window = cutoff_strategy.get_processing_window()
             actual_cutoff = cutoff_strategy.get_cutoff_time_for_query(window['target_minute'])
         
-        logger.info(f"🔍 [Thread-{thread_id}] Starting real-time data query for ship: {ship_id}")
+        thread_logger.info(f"🔍 Starting real-time data query for ship: {ship_id}")
         
         # Strategy: Use existing created_time DESC index by putting time condition first
         # No upper bound needed since data comes in batches every minute
@@ -371,8 +389,8 @@ class RealTimeProcessor:
         """
         
         start_time_query = time.time()
-        logger.info(f"🚀 [Thread-{thread_id}] Executing time-index-optimized query...")
-        logger.info(f"📊 [Thread-{thread_id}] Time range: created_time > {actual_cutoff}")
+        thread_logger.info(f"🚀 Executing time-index-optimized query...")
+        thread_logger.info(f"📊 Time range: created_time > {actual_cutoff}")
         
         try:
             result = db_manager.execute_query(query, (actual_cutoff, ship_id))
@@ -380,27 +398,27 @@ class RealTimeProcessor:
             execution_time = end_time_query - start_time_query
             
             record_count = len(result) if result else 0
-            logger.info(f"✅ [Thread-{thread_id}] Time-index-optimized query completed successfully!")
-            logger.info(f"📈 [Thread-{thread_id}] Execution time: {execution_time:.2f} seconds")
-            logger.info(f"📊 [Thread-{thread_id}] New records found: {record_count}")
+            thread_logger.success(f"Time-index-optimized query completed successfully!")
+            thread_logger.info(f"📈 Execution time: {execution_time:.2f} seconds")
+            thread_logger.info(f"📊 New records found: {record_count}")
             
             if execution_time > 3.0:
-                logger.warning(f"⚠️ [Thread-{thread_id}] Slow query detected: {execution_time:.2f}s execution time")
+                thread_logger.warning(f"⚠️ Slow query detected: {execution_time:.2f}s execution time")
             
             # Check for unusually large data volumes (potential performance issue)
             if record_count >= 5000:  # High volume warning threshold
-                logger.warning(f"⚠️ [Thread-{thread_id}] High volume detected: {record_count} records in 1 minute")
-                logger.warning(f"⚠️ [Thread-{thread_id}] Consider monitoring system performance")
+                thread_logger.warning(f"⚠️ High volume detected: {record_count} records in 1 minute")
+                thread_logger.warning(f"⚠️ Consider monitoring system performance")
             
             return result
             
         except Exception as e:
             end_time_query = time.time()
             execution_time = end_time_query - start_time_query
-            logger.error(f"❌ [Thread-{thread_id}] Time-index-optimized query failed after {execution_time:.2f} seconds: {e}")
+            thread_logger.error(f"Time-index-optimized query failed after {execution_time:.2f} seconds: {e}")
             
             # Fallback to original query if optimized version fails
-            logger.info(f"🔄 [Thread-{thread_id}] Attempting fallback to original query...")
+            thread_logger.info(f"🔄 Attempting fallback to original query...")
             try:
                 fallback_query = """
                 SELECT 
@@ -420,29 +438,34 @@ class RealTimeProcessor:
                 """
                 
                 fallback_result = db_manager.execute_query(fallback_query, (ship_id, actual_cutoff))
-                logger.info(f"✅ [Thread-{thread_id}] Fallback query succeeded: {len(fallback_result)} records")
+                thread_logger.success(f"Fallback query succeeded: {len(fallback_result)} records")
                 return fallback_result
                 
             except Exception as fallback_error:
-                logger.error(f"❌ [Thread-{thread_id}] Fallback query also failed: {fallback_error}")
+                thread_logger.error(f"Fallback query also failed: {fallback_error}")
                 raise
     
-    def _process_batch(self, batch_data: List[Dict[str, Any]], table_name: str):
+    def _process_batch(self, batch_data: List[Dict[str, Any]], table_name: str, thread_logger=None):
         """Process a batch of data"""
         if not batch_data:
             return
+            
+        if thread_logger is None:
+            # Extract ship_id from table_name for logging
+            ship_id = table_name.replace('tbl_data_timeseries_', '').upper()
+            thread_logger = get_ship_thread_logger(ship_id)
         
         # Debug: Log batch data structure
-        logger.debug(f"🔍 Processing batch with {len(batch_data)} records")
-        logger.debug(f"🔍 First record structure: {batch_data[0]}")
-        logger.debug(f"🔍 First record created_time: {batch_data[0]['created_time']} (type: {type(batch_data[0]['created_time'])})")
+        thread_logger.debug(f"🔍 Processing batch with {len(batch_data)} records")
+        thread_logger.debug(f"🔍 First record structure: {batch_data[0]}")
+        thread_logger.debug(f"🔍 First record created_time: {batch_data[0]['created_time']} (type: {type(batch_data[0]['created_time'])})")
         
         # Group data by timestamp
         grouped_data = self._group_data_by_timestamp(batch_data)
         
         # Debug: Log grouped data
-        logger.debug(f"🔍 Grouped data keys: {list(grouped_data.keys())}")
-        logger.debug(f"🔍 First timestamp: {list(grouped_data.keys())[0]} (type: {type(list(grouped_data.keys())[0])})")
+        thread_logger.debug(f"🔍 Grouped data keys: {list(grouped_data.keys())}")
+        thread_logger.debug(f"🔍 First timestamp: {list(grouped_data.keys())[0]} (type: {type(list(grouped_data.keys())[0])})")
         
         # Prepare and insert data
         insert_data = []
@@ -451,21 +474,21 @@ class RealTimeProcessor:
             if timestamp in self.processed_timestamps:
                 continue
             
-            logger.debug(f"🔍 Preparing row for timestamp: {timestamp} (type: {type(timestamp)})")
-            row_data = self._prepare_wide_row(timestamp, channels, table_name)
+            thread_logger.debug(f"🔍 Preparing row for timestamp: {timestamp} (type: {type(timestamp)})")
+            row_data = self._prepare_wide_row(timestamp, channels, table_name, thread_logger)
             if row_data:
                 insert_data.append(row_data)
                 self.processed_timestamps.add(timestamp)
         
         if not insert_data:
-            logger.warning("⚠️ No data to insert after processing")
+            thread_logger.warning("⚠️ No data to insert after processing")
             return
         
-        logger.debug(f"🔍 Final insert_data count: {len(insert_data)}")
-        logger.debug(f"🔍 First insert_data: {insert_data[0]}")
+        thread_logger.debug(f"🔍 Final insert_data count: {len(insert_data)}")
+        thread_logger.debug(f"🔍 First insert_data: {insert_data[0]}")
         
         # Execute batch insert with conflict resolution
-        self._insert_batch_data(insert_data, table_name)
+        self._insert_batch_data(insert_data, table_name, thread_logger)
     
     def _group_data_by_timestamp(self, batch_data: List[Dict[str, Any]]) -> Dict[datetime, List[Dict[str, Any]]]:
         """Group data by created_time"""
@@ -493,12 +516,14 @@ class RealTimeProcessor:
             
             return self.table_columns_cache[table_name_lower].copy()  # Return a copy to avoid race conditions
     
-    def _prepare_wide_row(self, timestamp: datetime, channels: List[Dict[str, Any]], table_name: str) -> Optional[Dict[str, Any]]:
+    def _prepare_wide_row(self, timestamp: datetime, channels: List[Dict[str, Any]], table_name: str, thread_logger=None) -> Optional[Dict[str, Any]]:
         """Prepare a single row for wide table insertion"""
-        import threading
-        thread_id = threading.current_thread().ident
+        if thread_logger is None:
+            # Extract ship_id from table_name for logging
+            ship_id = table_name.replace('tbl_data_timeseries_', '').upper()
+            thread_logger = get_ship_thread_logger(ship_id)
         
-        logger.debug(f"🔍 [Thread-{thread_id}] Preparing wide row for {table_name} at {timestamp}")
+        thread_logger.debug(f"🔍 Preparing wide row for {table_name} at {timestamp}")
         
         # Get existing columns for the table (with caching)
         existing_columns = self._get_table_columns(table_name)
@@ -522,7 +547,7 @@ class RealTimeProcessor:
             
             # Check if column exists in table, skip if not (don't add new columns)
             if channel_id not in existing_columns:
-                logger.debug(f"🔍 [Thread-{thread_id}] Skipping column {channel_id} - not in table {table_name}")
+                thread_logger.debug(f"🔍 Skipping column {channel_id} - not in table {table_name}")
                 skipped_not_in_table += 1
                 continue
             
@@ -537,16 +562,16 @@ class RealTimeProcessor:
             
             processed_channels += 1
         
-        logger.info(f"📊 [Thread-{thread_id}] Processing summary:")
-        logger.info(f"   📊 Processed channels: {processed_channels}")
-        logger.info(f"   📊 Skipped (not allowed): {skipped_not_allowed}")
-        logger.info(f"   📊 Skipped (not in table): {skipped_not_in_table}")
-        logger.debug(f"   📊 Final row columns: {len(row_data)}")
+        thread_logger.info(f"📊 Processing summary:")
+        thread_logger.info(f"   📊 Processed channels: {processed_channels}")
+        thread_logger.info(f"   📊 Skipped (not allowed): {skipped_not_allowed}")
+        thread_logger.info(f"   📊 Skipped (not in table): {skipped_not_in_table}")
+        thread_logger.debug(f"   📊 Final row columns: {len(row_data)}")
         
         # Debug: Log the prepared row data
-        logger.debug(f"🔍 [Thread-{thread_id}] Prepared row data: {row_data}")
-        logger.debug(f"🔍 [Thread-{thread_id}] Row data keys: {list(row_data.keys())}")
-        logger.debug(f"🔍 [Thread-{thread_id}] Row data values: {list(row_data.values())}")
+        thread_logger.debug(f"🔍 Prepared row data: {row_data}")
+        thread_logger.debug(f"🔍 Row data keys: {list(row_data.keys())}")
+        thread_logger.debug(f"🔍 Row data values: {list(row_data.values())}")
         
         return row_data
     
@@ -558,15 +583,20 @@ class RealTimeProcessor:
         column_name = self.value_format_mapping[value_format]
         return row_data.get(column_name)
     
-    def _insert_batch_data(self, insert_data: List[Dict[str, Any]], table_name: str):
+    def _insert_batch_data(self, insert_data: List[Dict[str, Any]], table_name: str, thread_logger=None):
         """Insert batch data with conflict resolution"""
         if not insert_data:
             return
+            
+        if thread_logger is None:
+            # Extract ship_id from table_name for logging
+            ship_id = table_name.replace('tbl_data_timeseries_', '').upper()
+            thread_logger = get_ship_thread_logger(ship_id)
         
         # Debug: Log the first row structure
-        logger.debug(f"🔍 First row data structure: {insert_data[0]}")
-        logger.debug(f"🔍 First row keys: {list(insert_data[0].keys())}")
-        logger.debug(f"🔍 First row values: {list(insert_data[0].values())}")
+        thread_logger.debug(f"🔍 First row data structure: {insert_data[0]}")
+        thread_logger.debug(f"🔍 First row keys: {list(insert_data[0].keys())}")
+        thread_logger.debug(f"🔍 First row values: {list(insert_data[0].values())}")
         
         # Generate INSERT SQL with ON CONFLICT
         columns = list(insert_data[0].keys())
@@ -592,7 +622,7 @@ class RealTimeProcessor:
         
         # Check if we have any columns to update
         if not update_clauses:
-            logger.warning(f"No columns to update for {table_name}, using simple INSERT")
+            thread_logger.warning(f"No columns to update for {table_name}, using simple INSERT")
             insert_sql = f"""
             INSERT INTO tenant.{table_name} ({columns_str})
             VALUES ({placeholders})
@@ -610,8 +640,8 @@ class RealTimeProcessor:
         try:
             # Debug: Log the actual values being inserted
             first_row_values = [insert_data[0].get(col) for col in columns]
-            logger.debug(f"🔍 First row values for insertion: {first_row_values}")
-            logger.debug(f"🔍 Columns order: {columns}")
+            thread_logger.debug(f"🔍 First row values for insertion: {first_row_values}")
+            thread_logger.debug(f"🔍 Columns order: {columns}")
             
             # Prepare data in correct column order
             values_list = []
@@ -625,27 +655,30 @@ class RealTimeProcessor:
             data_columns = len(columns) - 1  # created_time 제외
             time_range = f"{min(row['created_time'] for row in insert_data)} ~ {max(row['created_time'] for row in insert_data)}"
             
-            logger.info(f"✅ REALTIME INSERT SUCCESS: {table_name}")
-            logger.info(f"   📊 Records: {len(insert_data)} rows inserted")
-            logger.info(f"   📊 Columns: {data_columns} data columns (total: {len(columns)})")
-            logger.info(f"   📊 Time Range: {time_range}")
-            logger.info(f"   📊 Affected Rows: {affected_rows}")
+            thread_logger.success(f"REALTIME INSERT SUCCESS: {table_name}")
+            thread_logger.info(f"   📊 Records: {len(insert_data)} rows inserted")
+            thread_logger.info(f"   📊 Columns: {data_columns} data columns (total: {len(columns)})")
+            thread_logger.info(f"   📊 Time Range: {time_range}")
+            thread_logger.info(f"   📊 Affected Rows: {affected_rows}")
             
             # Status tracking log for check_status.sh
             # Extract ship_id from table_name (format: tbl_data_timeseries_SHIPID)
             ship_id = table_name.split('_')[-1].lower()
-            logger.info(f"STATUS:REALTIME:{ship_id}:{len(insert_data)}:{data_columns}:{time_range}:{affected_rows}")
+            thread_logger.info(f"STATUS:REALTIME:{ship_id}:{len(insert_data)}:{data_columns}:{time_range}:{affected_rows}")
             
         except Exception as e:
-            logger.error(f"❌ REALTIME INSERT FAILED: {table_name}")
-            logger.error(f"   📊 Records: {len(insert_data)} rows failed")
-            logger.error(f"   📊 Columns: {len(columns)} columns")
-            logger.error(f"   📊 Error: {e}")
-            logger.error(f"SQL: {insert_sql}")
+            thread_logger.error(f"REALTIME INSERT FAILED: {table_name}")
+            thread_logger.error(f"   📊 Records: {len(insert_data)} rows failed")
+            thread_logger.error(f"   📊 Columns: {len(columns)} columns")
+            thread_logger.error(f"   📊 Error: {e}")
+            thread_logger.error(f"SQL: {insert_sql}")
             raise
     
-    def _create_table_for_ship(self, ship_id: str):
+    def _create_table_for_ship(self, ship_id: str, thread_logger=None):
         """Create table for ship if it doesn't exist or has wrong column count"""
+        if thread_logger is None:
+            thread_logger = get_ship_thread_logger(ship_id)
+            
         table_name = f'tbl_data_timeseries_{ship_id.upper()}'
         
         try:
@@ -666,13 +699,13 @@ class RealTimeProcessor:
                 expected_columns = len(self.allowed_columns) + 1  # +1 for created_time
                 
                 if current_columns != expected_columns:
-                    logger.warning(f"Table {table_name} has {current_columns} columns, expected {expected_columns}")
-                    logger.info(f"Recreating table with correct column count")
+                    thread_logger.warning(f"Table {table_name} has {current_columns} columns, expected {expected_columns}")
+                    thread_logger.info(f"Recreating table with correct column count")
                     should_recreate = True
                 else:
-                    logger.debug(f"Table {table_name} already exists with correct column count ({current_columns})")
+                    thread_logger.debug(f"Table {table_name} already exists with correct column count ({current_columns})")
             else:
-                logger.info(f"Table {table_name} does not exist, creating it")
+                thread_logger.info(f"Table {table_name} does not exist, creating it")
                 should_recreate = True
             
             if should_recreate:
@@ -683,14 +716,14 @@ class RealTimeProcessor:
                 success = table_generator.generate_table(ship_id, schema, drop_if_exists=should_recreate)
                 
                 if success:
-                    logger.info(f"✅ Created/updated table for ship_id: {ship_id} with {len(schema['columns'])} columns")
+                    thread_logger.success(f"Created/updated table for ship_id: {ship_id} with {len(schema['columns'])} columns")
                 else:
-                    logger.error(f"❌ Failed to create table for ship_id: {ship_id}")
+                    thread_logger.error(f"Failed to create table for ship_id: {ship_id}")
             else:
-                logger.info(f"✅ Table {table_name} is ready with correct column count")
+                thread_logger.success(f"Table {table_name} is ready with correct column count")
                 
         except Exception as e:
-            logger.error(f"❌ Error creating table for ship_id {ship_id}: {e}")
+            thread_logger.error(f"Error creating table for ship_id {ship_id}: {e}")
             raise
     
     def _create_realtime_schema(self, ship_id: str) -> Dict[str, Any]:

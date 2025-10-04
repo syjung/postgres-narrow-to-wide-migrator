@@ -274,12 +274,48 @@ import sys
 sys.path.append('.')
 try:
     from cutoff_time_manager import cutoff_time_manager
+    from config import migration_config
+    
+    # Get all ship cutoff times
+    all_cutoff_times = cutoff_time_manager.get_all_ship_cutoff_times()
+    global_cutoff_time = cutoff_time_manager.get_global_cutoff_time()
+    
+    print('=== SHIP-SPECIFIC CUTOFF TIMES ===')
+    if all_cutoff_times:
+        for ship_id, cutoff_time in all_cutoff_times.items():
+            if cutoff_time:
+                print(f'  {ship_id}: {cutoff_time}')
+            else:
+                print(f'  {ship_id}: No cutoff time')
+    else:
+        print('  No ship-specific cutoff times found')
+    
+    print()
+    print('=== GLOBAL CUTOFF TIME ===')
+    if global_cutoff_time:
+        print(f'  Global cutoff time: {global_cutoff_time}')
+    else:
+        print('  No global cutoff time')
+    
+    print()
+    print('=== CUTOFF TIME FILES ===')
+    import os
+    cutoff_dir = cutoff_time_manager.cutoff_time_dir
+    if os.path.exists(cutoff_dir):
+        files = [f for f in os.listdir(cutoff_dir) if f.endswith('_cutoff_time.txt')]
+        print(f'  Directory: {cutoff_dir}/')
+        print(f'  Ship files: {len(files)} files')
+        for file in sorted(files):
+            print(f'    {file}')
+    else:
+        print(f'  Directory {cutoff_dir}/ does not exist')
+    
+    # Show legacy global file status
     status = cutoff_time_manager.get_cutoff_time_status()
-    print(f'  Has cutoff time: {status[\"has_cutoff_time\"]}')
-    if status['cutoff_time']:
-        print(f'  Cutoff time: {status[\"cutoff_time\"]}')
-    print(f'  File exists: {status[\"file_exists\"]}')
-    print(f'  File path: {status[\"file_path\"]}')
+    print(f'  Legacy global file: {status[\"file_exists\"]}')
+    if status['file_exists']:
+        print(f'  Legacy file path: {status[\"file_path\"]}')
+        
 except Exception as e:
     print(f'  Error: {e}')
 " 2>&1)

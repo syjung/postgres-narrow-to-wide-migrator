@@ -13,6 +13,7 @@ from table_generator import table_generator
 from schema_analyzer import schema_analyzer
 from config import migration_config
 from chunked_migration_strategy import chunked_migration_strategy
+from thread_logger import get_ship_thread_logger
 
 
 class ParallelBatchMigrator:
@@ -139,6 +140,29 @@ class ParallelBatchMigrator:
                 'cutoff_time': cutoff_time.isoformat() if cutoff_time else None
             }
             
+            # Save cutoff time for real-time processing (ship-specific)
+            from cutoff_time_manager import cutoff_time_manager
+            
+            if cutoff_time:
+                # Save global cutoff time for backward compatibility
+                cutoff_time_manager.save_cutoff_time(cutoff_time)
+                logger.info(f"Global cutoff time saved: {cutoff_time}")
+                
+                # Save ship-specific cutoff times for completed ships
+                for ship_id in self.completed_ships:
+                    cutoff_time_manager.save_ship_cutoff_time(ship_id, cutoff_time)
+                    logger.debug(f"Ship cutoff time saved for {ship_id}: {cutoff_time}")
+            else:
+                # Use current time as cutoff if not specified
+                current_cutoff = datetime.now()
+                cutoff_time_manager.save_cutoff_time(current_cutoff)
+                logger.info(f"Global cutoff time set to current time: {current_cutoff}")
+                
+                # Save ship-specific cutoff times for completed ships
+                for ship_id in self.completed_ships:
+                    cutoff_time_manager.save_ship_cutoff_time(ship_id, current_cutoff)
+                    logger.debug(f"Ship cutoff time saved for {ship_id}: {current_cutoff}")
+            
             logger.info(f"🎉 Parallel batch migration completed!")
             logger.info(f"   📊 Total ships: {summary['total_ships']}")
             logger.info(f"   📊 Completed: {summary['completed_ships']}")
@@ -164,22 +188,22 @@ class ParallelBatchMigrator:
         thread_id = threading.current_thread().ident
         thread_name = threading.current_thread().name
         
-        logger.info(f"🚢 [Thread-{thread_id}] Starting batch migration for ship: {ship_id}")
+        thread_logger.info(f"🚢 Starting batch migration for ship: {ship_id}")
         
         try:
             start_time = time.time()
-            result = self._migrate_ship_data(ship_id, cutoff_time)
+            result = self._migrate_ship_data(ship_id, cutoff_time, thread_logger)
             end_time = time.time()
             
             processing_time = end_time - start_time
             result['processing_time'] = processing_time
             
-            logger.info(f"✅ [Thread-{thread_id}] Completed batch migration for ship: {ship_id} in {processing_time:.2f}s")
+            thread_logger.success(f"Completed batch migration for ship: {ship_id} in {processing_time:.2f}s")
             
             return result
             
         except Exception as e:
-            logger.error(f"❌ [Thread-{thread_id}] Error migrating ship {ship_id}: {e}")
+            thread_logger.error(f"Error migrating ship {ship_id}: {e}")
             return {
                 'success': False,
                 'ship_id': ship_id,
@@ -187,49 +211,50 @@ class ParallelBatchMigrator:
                 'records_processed': 0
             }
     
-    def _migrate_ship_data(self, ship_id: str, cutoff_time: Optional[datetime] = None) -> Dict[str, Any]:
+    def _migrate_ship_data(self, ship_id: str, cutoff_time: Optional[datetime] = None, thread_logger=None) -> Dict[str, Any]:
         """Migrate data for a specific ship using chunked strategy"""
-        thread_id = threading.current_thread().ident
+        if thread_logger is None:
+            thread_logger = get_ship_thread_logger(ship_id)
         
-        logger.info(f"🚀 [Thread-{thread_id}] Starting chunked migration for ship: {ship_id}")
+        thread_logger.info(f"🚀 Starting chunked migration for ship: {ship_id}")
         
         try:
             # Ensure table exists and is properly created
             table_name = f'tbl_data_timeseries_{ship_id.upper()}'  # Force uppercase for consistency
-            logger.info(f"📋 [Thread-{thread_id}] Target table: {table_name}")
+            thread_logger.info(f"📋 Target table: {table_name}")
             
             if not db_manager.check_table_exists(table_name):
-                logger.info(f"📋 [Thread-{thread_id}] Creating table: {table_name}")
-                self._create_table_for_ship(ship_id)
+                thread_logger.info(f"📋 Creating table: {table_name}")
+                self._create_table_for_ship(ship_id, thread_logger)
             else:
-                logger.info(f"📋 [Thread-{thread_id}] Table already exists: {table_name}")
+                thread_logger.info(f"📋 Table already exists: {table_name}")
             
             # Use chunked migration strategy
             total_records = 0
             
             # Get data chunks
             chunks = list(chunked_migration_strategy.get_data_chunks(ship_id, cutoff_time))
-            logger.info(f"📊 [Thread-{thread_id}] Found {len(chunks)} chunks to process")
+            thread_logger.info(f"📊 Found {len(chunks)} chunks to process")
             
             for i, (start_time, end_time) in enumerate(chunks):
-                logger.info(f"🔄 [Thread-{thread_id}] Processing chunk {i+1}/{len(chunks)}: {start_time} to {end_time}")
+                thread_logger.info(f"🔄 Processing chunk {i+1}/{len(chunks)}: {start_time} to {end_time}")
                 
                 try:
-                    chunk_result = chunked_migration_strategy.migrate_chunk(ship_id, start_time, end_time, table_name)
+                    chunk_result = chunked_migration_strategy.migrate_chunk(ship_id, start_time, end_time, table_name, thread_logger)
                     
                     if chunk_result['status'] == 'completed':
                         records_processed = chunk_result.get('records_processed', 0)
                         total_records += records_processed
-                        logger.info(f"✅ [Thread-{thread_id}] Chunk {i+1} completed: {records_processed} records")
+                        thread_logger.success(f"Chunk {i+1} completed: {records_processed} records")
                     else:
-                        logger.info(f"⏭️ [Thread-{thread_id}] Chunk {i+1} skipped: {chunk_result.get('message', 'No data')}")
+                        thread_logger.info(f"⏭️ Chunk {i+1} skipped: {chunk_result.get('message', 'No data')}")
                         
                 except Exception as e:
-                    logger.error(f"❌ [Thread-{thread_id}] Chunk {i+1} failed: {e}")
+                    thread_logger.error(f"Chunk {i+1} failed: {e}")
                     # Continue with next chunk instead of failing entire ship
                     continue
             
-            logger.info(f"✅ [Thread-{thread_id}] Ship migration completed: {total_records} total records")
+            thread_logger.success(f"Ship migration completed: {total_records} total records")
             
             return {
                 'success': True,
@@ -240,7 +265,7 @@ class ParallelBatchMigrator:
             }
             
         except Exception as e:
-            logger.error(f"❌ [Thread-{thread_id}] Ship migration failed: {e}")
+            thread_logger.error(f"Ship migration failed: {e}")
             return {
                 'success': False,
                 'ship_id': ship_id,
@@ -248,12 +273,13 @@ class ParallelBatchMigrator:
                 'records_processed': 0
             }
     
-    def _create_table_for_ship(self, ship_id: str):
+    def _create_table_for_ship(self, ship_id: str, thread_logger=None):
         """Create table for ship if it doesn't exist (thread-safe)"""
-        thread_id = threading.current_thread().ident
+        if thread_logger is None:
+            thread_logger = get_ship_thread_logger(ship_id)
         
         try:
-            logger.info(f"📋 [Thread-{thread_id}] Creating table for ship: {ship_id}")
+            thread_logger.info(f"📋 Creating table for ship: {ship_id}")
             
             # Analyze schema for this ship
             schema = schema_analyzer.analyze_ship_data(ship_id, sample_minutes=60)
@@ -262,12 +288,12 @@ class ParallelBatchMigrator:
             success = table_generator.generate_table(ship_id, schema, drop_if_exists=False)
             
             if success:
-                logger.info(f"✅ [Thread-{thread_id}] Created table for ship_id: {ship_id}")
+                thread_logger.success(f"Created table for ship_id: {ship_id}")
             else:
-                logger.error(f"❌ [Thread-{thread_id}] Failed to create table for ship_id: {ship_id}")
+                thread_logger.error(f"Failed to create table for ship_id: {ship_id}")
                 
         except Exception as e:
-            logger.error(f"❌ [Thread-{thread_id}] Error creating table for ship_id {ship_id}: {e}")
+            thread_logger.error(f"Error creating table for ship_id {ship_id}: {e}")
     
     def get_migration_progress(self) -> Dict[str, Any]:
         """Get current migration progress"""

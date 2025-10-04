@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from loguru import logger
 from database import db_manager
 from config import migration_config
+from thread_logger import get_ship_thread_logger
 
 
 class ChunkedMigrationStrategy:
@@ -188,7 +189,7 @@ class ChunkedMigrationStrategy:
             return False
     
     def migrate_chunk(self, ship_id: str, start_time: datetime, end_time: datetime, 
-                     table_name: str) -> Dict[str, Any]:
+                     table_name: str, thread_logger=None) -> Dict[str, Any]:
         """
         Migrate a single chunk of data
         
@@ -197,46 +198,50 @@ class ChunkedMigrationStrategy:
             start_time: Chunk start time
             end_time: Chunk end time
             table_name: Target table name
+            thread_logger: Thread-aware logger
             
         Returns:
             Migration result dictionary
         """
-        logger.info(f"🚀 Starting chunk migration: {ship_id} [{start_time} to {end_time}]")
+        if thread_logger is None:
+            thread_logger = get_ship_thread_logger(ship_id)
+            
+        thread_logger.info(f"🚀 Starting chunk migration: {ship_id} [{start_time} to {end_time}]")
         
         try:
             # Step 1: Extract chunk data (with LIMIT to avoid large queries)
-            logger.info(f"📊 Extracting data for chunk: {start_time} to {end_time}")
-            chunk_data = self._extract_chunk_data_safe(ship_id, start_time, end_time)
+            thread_logger.info(f"📊 Extracting data for chunk: {start_time} to {end_time}")
+            chunk_data = self._extract_chunk_data_safe(ship_id, start_time, end_time, thread_logger)
             
             if not chunk_data:
-                logger.info(f"ℹ️ No data found in chunk: {start_time} to {end_time}")
+                thread_logger.info(f"ℹ️ No data found in chunk: {start_time} to {end_time}")
                 return {
                     'status': 'skipped',
                     'records_processed': 0,
                     'message': 'No data in chunk'
                 }
             
-            logger.info(f"📈 Extracted {len(chunk_data)} records from chunk")
+            thread_logger.info(f"📈 Extracted {len(chunk_data)} records from chunk")
             
             # Step 2: Transform to wide format
-            logger.info(f"🔄 Transforming data to wide format...")
+            thread_logger.info(f"🔄 Transforming data to wide format...")
             wide_data = self._transform_chunk_to_wide(chunk_data)
             
-            logger.info(f"✅ Transformed to {len(wide_data)} wide records")
+            thread_logger.info(f"✅ Transformed to {len(wide_data)} wide records")
             
             # Step 3: Insert to target table
-            logger.info(f"💾 Inserting data in batches of {self.batch_size}...")
-            inserted_count = self._insert_chunk_data(table_name, wide_data)
+            thread_logger.info(f"💾 Inserting data in batches of {self.batch_size}...")
+            inserted_count = self._insert_chunk_data(table_name, wide_data, thread_logger)
             
             # 📊 상세한 로그 정보
             data_columns = len(self.allowed_columns)
             time_range = f"{start_time} ~ {end_time}"
             
-            logger.info(f"✅ CHUNK MIGRATION SUCCESS: {ship_id}")
-            logger.info(f"   📊 Records processed: {inserted_count}")
-            logger.info(f"   📊 Columns: {data_columns} data columns")
-            logger.info(f"   📊 Time Range: {time_range}")
-            logger.info(f"   📊 Method: Chunked migration ({self.chunk_size_hours}-hour chunks)")
+            thread_logger.success(f"CHUNK MIGRATION SUCCESS: {ship_id}")
+            thread_logger.info(f"   📊 Records processed: {inserted_count}")
+            thread_logger.info(f"   📊 Columns: {data_columns} data columns")
+            thread_logger.info(f"   📊 Time Range: {time_range}")
+            thread_logger.info(f"   📊 Method: Chunked migration ({self.chunk_size_hours}-hour chunks)")
             
             return {
                 'status': 'completed',
@@ -256,16 +261,19 @@ class ChunkedMigrationStrategy:
                 'error': str(e)
             }
     
-    def _extract_chunk_data_safe(self, ship_id: str, start_time: datetime, end_time: datetime) -> List[Dict[str, Any]]:
+    def _extract_chunk_data_safe(self, ship_id: str, start_time: datetime, end_time: datetime, thread_logger=None) -> List[Dict[str, Any]]:
         """Extract data for a specific chunk with safe LIMIT and column filtering"""
         import time
         
-        logger.info(f"🔍 Starting data extraction for chunk: {ship_id} [{start_time} to {end_time}]")
-        logger.info(f"🔒 Filtering by allowed columns: {len(self.allowed_columns)} columns")
+        if thread_logger is None:
+            thread_logger = get_ship_thread_logger(ship_id)
+        
+        thread_logger.info(f"🔍 Starting data extraction for chunk: {ship_id} [{start_time} to {end_time}]")
+        thread_logger.info(f"🔒 Filtering by allowed columns: {len(self.allowed_columns)} columns")
         
         # Create a placeholder for IN clause with allowed columns
         if not self.allowed_columns:
-            logger.warning("⚠️ No allowed columns found, skipping data extraction")
+            thread_logger.warning("⚠️ No allowed columns found, skipping data extraction")
             return []
         
         # Convert set to list for SQL IN clause
@@ -292,7 +300,7 @@ class ChunkedMigrationStrategy:
         """
         
         start_time_query = time.time()
-        logger.info(f"🚀 Executing large table query (this may take time)...")
+        thread_logger.info(f"🚀 Executing large table query (this may take time)...")
         
         try:
             # Prepare parameters: start_time, end_time, ship_id, then all allowed columns
@@ -303,34 +311,34 @@ class ChunkedMigrationStrategy:
             execution_time = end_time_query - start_time_query
             
             record_count = len(result) if result else 0
-            logger.info(f"✅ Query completed successfully!")
-            logger.info(f"📈 Execution time: {execution_time:.2f} seconds")
-            logger.info(f"📊 Records extracted: {record_count}")
+            thread_logger.success(f"Query completed successfully!")
+            thread_logger.info(f"📈 Execution time: {execution_time:.2f} seconds")
+            thread_logger.info(f"📊 Records extracted: {record_count}")
             
             # Check for large chunks and suggest optimization
             if record_count >= 1000000:  # 1M+ records
-                logger.warning(f"⚠️ Very large chunk detected: {record_count:,} records")
-                logger.warning(f"⚠️ Consider reducing chunk size from 24h to 12h or 6h")
+                thread_logger.warning(f"⚠️ Very large chunk detected: {record_count:,} records")
+                thread_logger.warning(f"⚠️ Consider reducing chunk size from 24h to 12h or 6h")
             elif record_count >= 500000:  # 500K+ records
-                logger.warning(f"⚠️ Large chunk detected: {record_count:,} records")
-                logger.warning(f"⚠️ Consider reducing chunk size if performance degrades")
+                thread_logger.warning(f"⚠️ Large chunk detected: {record_count:,} records")
+                thread_logger.warning(f"⚠️ Consider reducing chunk size if performance degrades")
             
             # 성능 분석 및 권장사항
             if execution_time > 60.0:  # 1분 이상
-                logger.error(f"❌ Very slow query: {execution_time:.2f}s execution time")
-                logger.error(f"❌ Consider: 1) Reduce chunk size to 6-12h, 2) Check database performance")
+                thread_logger.error(f"❌ Very slow query: {execution_time:.2f}s execution time")
+                thread_logger.error(f"❌ Consider: 1) Reduce chunk size to 6-12h, 2) Check database performance")
             elif execution_time > 30.0:  # 30초 이상
-                logger.warning(f"⚠️ Slow query detected: {execution_time:.2f}s execution time")
-                logger.warning(f"⚠️ Consider reducing chunk size if this persists")
+                thread_logger.warning(f"⚠️ Slow query detected: {execution_time:.2f}s execution time")
+                thread_logger.warning(f"⚠️ Consider reducing chunk size if this persists")
             elif execution_time > 10.0:  # 10초 이상
-                logger.info(f"📊 Query execution time: {execution_time:.2f}s (acceptable for large chunks)")
+                thread_logger.info(f"📊 Query execution time: {execution_time:.2f}s (acceptable for large chunks)")
             
             return result
             
         except Exception as e:
             end_time_query = time.time()
             execution_time = end_time_query - start_time_query
-            logger.error(f"❌ Query failed after {execution_time:.2f} seconds: {e}")
+            thread_logger.error(f"Query failed after {execution_time:.2f} seconds: {e}")
             raise
     
     def _transform_chunk_to_wide(self, chunk_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -354,13 +362,21 @@ class ChunkedMigrationStrategy:
         
         return wide_data
     
-    def _insert_chunk_data(self, table_name: str, wide_data: List[Dict[str, Any]]) -> int:
+    def _insert_chunk_data(self, table_name: str, wide_data: List[Dict[str, Any]], thread_logger=None) -> int:
         """Insert chunk data using batch processing"""
         if not wide_data:
-            logger.warning("⚠️ No data to insert")
+            if thread_logger:
+                thread_logger.warning("⚠️ No data to insert")
+            else:
+                logger.warning("⚠️ No data to insert")
             return 0
+            
+        if thread_logger is None:
+            # Extract ship_id from table_name for logging
+            ship_id = table_name.replace('tbl_data_timeseries_', '').upper()
+            thread_logger = get_ship_thread_logger(ship_id)
         
-        logger.info(f"📦 Inserting {len(wide_data)} records into {table_name}")
+        thread_logger.info(f"📦 Inserting {len(wide_data)} records into {table_name}")
         
         # Process in batches
         total_inserted = 0
@@ -370,25 +386,30 @@ class ChunkedMigrationStrategy:
             batch_count += 1
             batch = wide_data[i:i + self.batch_size]
             
-            logger.info(f"🔄 Processing batch {batch_count}: {len(batch)} records")
+            thread_logger.info(f"🔄 Processing batch {batch_count}: {len(batch)} records")
             
             try:
-                inserted = self._insert_batch(table_name, batch)
+                inserted = self._insert_batch(table_name, batch, thread_logger)
                 total_inserted += inserted
                 
-                logger.info(f"✅ Batch {batch_count} completed: {inserted} records inserted")
+                thread_logger.success(f"Batch {batch_count} completed: {inserted} records inserted")
                 
             except Exception as e:
-                logger.error(f"❌ Batch {batch_count} failed: {e}")
+                thread_logger.error(f"Batch {batch_count} failed: {e}")
                 raise
         
-        logger.info(f"🎯 Total inserted: {total_inserted} records in {batch_count} batches")
+        thread_logger.success(f"Total inserted: {total_inserted} records in {batch_count} batches")
         return total_inserted
     
-    def _insert_batch(self, table_name: str, batch_data: List[Dict[str, Any]]) -> int:
+    def _insert_batch(self, table_name: str, batch_data: List[Dict[str, Any]], thread_logger=None) -> int:
         """Insert a batch of data"""
         if not batch_data:
             return 0
+            
+        if thread_logger is None:
+            # Extract ship_id from table_name for logging
+            ship_id = table_name.replace('tbl_data_timeseries_', '').upper()
+            thread_logger = get_ship_thread_logger(ship_id)
         
         # Prepare data for insertion
         columns = list(batch_data[0].keys())
