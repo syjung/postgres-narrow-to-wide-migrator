@@ -236,7 +236,7 @@ class ChunkedMigrationStrategy:
             logger.info(f"   📊 Records processed: {inserted_count}")
             logger.info(f"   📊 Columns: {data_columns} data columns")
             logger.info(f"   📊 Time Range: {time_range}")
-            logger.info(f"   📊 Method: Chunked migration (24-hour chunks)")
+            logger.info(f"   📊 Method: Chunked migration ({self.chunk_size_hours}-hour chunks)")
             
             return {
                 'status': 'completed',
