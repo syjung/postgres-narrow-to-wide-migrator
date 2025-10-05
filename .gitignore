@@ -145,3 +145,4 @@ Thumbs.db
 *.temp
 temp/
 tmp/
+cutoff_times/
