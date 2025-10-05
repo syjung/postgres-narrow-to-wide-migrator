@@ -8,7 +8,7 @@ import threading
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Generator
 from loguru import logger
-from config import db_config
+from config import db_config, migration_config
 
 
 class DatabaseManager:
@@ -17,15 +17,19 @@ class DatabaseManager:
     def __init__(self):
         self.connection_string = db_config.connection_string
         
-        # Connection pool configuration - thread isolation
-        self.pool_config = {
-            'minconn': 8,      # Minimum connections (4x thread count for isolation)
-            'maxconn': 20,     # Maximum connections (increased for better concurrency)
-            'cursor_factory': None  # Use default cursor for better thread safety
-        }
+        # Dynamic connection pool configuration based on ship count
+        self.pool_config = migration_config.get_optimal_pool_config()
         
         self._pool = None
         self._initialize_pool()
+        
+        # Log dynamic configuration
+        ship_count = len(migration_config.target_ship_ids)
+        thread_count = migration_config.get_optimal_thread_count()
+        logger.info(f"🧠 Dynamic configuration applied:")
+        logger.info(f"   📊 Ships: {ship_count}")
+        logger.info(f"   📊 Threads: {thread_count}")
+        logger.info(f"   📊 DB Pool: {self.pool_config['minconn']}-{self.pool_config['maxconn']}")
     
     def _initialize_pool(self):
         """Initialize connection pool"""
@@ -72,16 +76,29 @@ class DatabaseManager:
             logger.error(f"❌ Failed to close connection pool: {e}")
     
     def get_pool_status(self):
-        """Get connection pool status"""
+        """Get connection pool status with detailed monitoring"""
         if not self._pool:
             return {'status': 'not_initialized'}
         
-        return {
-            'status': 'active',
-            'min_connections': self.pool_config['minconn'],
-            'max_connections': self.pool_config['maxconn'],
-            'pool_closed': self._pool.closed
-        }
+        try:
+            return {
+                'status': 'active',
+                'min_connections': self.pool_config['minconn'],
+                'max_connections': self.pool_config['maxconn'],
+                'current_connections': len(self._pool._used) + len(self._pool._pool),
+                'used_connections': len(self._pool._used),
+                'available_connections': len(self._pool._pool),
+                'pool_closed': self._pool.closed,
+                'utilization_percent': round((len(self._pool._used) / self.pool_config['maxconn']) * 100, 2)
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get detailed pool status: {e}")
+            return {
+                'status': 'active',
+                'min_connections': self.pool_config['minconn'],
+                'max_connections': self.pool_config['maxconn'],
+                'pool_closed': self._pool.closed
+            }
     
     @contextmanager
     def get_cursor(self):
@@ -391,9 +408,15 @@ def close_connection_pool():
 
 # Connection pool monitoring utilities
 def log_pool_status():
-    """Log current connection pool status"""
+    """Log detailed connection pool status"""
     status = get_connection_pool_status()
-    logger.info(f"🔗 Connection Pool Status: {status}")
+    if status.get('status') == 'active':
+        logger.info(f"🔗 Connection Pool Status:")
+        logger.info(f"   📊 Utilization: {status.get('utilization_percent', 0)}%")
+        logger.info(f"   📊 Used/Available: {status.get('used_connections', 0)}/{status.get('available_connections', 0)}")
+        logger.info(f"   📊 Total: {status.get('current_connections', 0)}/{status.get('max_connections', 0)}")
+    else:
+        logger.info(f"🔗 Connection Pool Status: {status}")
 
 
 def optimize_pool_for_migration():

@@ -34,14 +34,16 @@ class RealTimeProcessor:
         # Cache for table columns to avoid repeated queries
         self.table_columns_cache: Dict[str, Set[str]] = {}
         
-        # Thread pool for parallel ship processing
-        # Dynamic thread count based on number of ships
+        # Dynamic thread pool for parallel ship processing
         ship_count = len(migration_config.target_ship_ids)
-        self.max_workers = min(ship_count, migration_config.parallel_workers)
+        self.max_workers = migration_config.get_optimal_thread_count()
         self.thread_pool = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="realtime")
         
-        logger.info(f"🚀 Initialized real-time processor with {self.max_workers} threads for {ship_count} ships")
-        logger.info(f"📊 Thread limit: {migration_config.parallel_workers}, Ships: {ship_count}")
+        logger.info(f"🚀 Initialized dynamic real-time processor:")
+        logger.info(f"   📊 Ships: {ship_count}")
+        logger.info(f"   📊 Threads: {self.max_workers}")
+        logger.info(f"   📊 Ratio: {ship_count/self.max_workers:.2f} ships per thread")
+        logger.info(f"   📊 Max limit: {migration_config.max_parallel_workers}")
         
         # Thread-safe locks for shared resources
         self.cache_lock = threading.Lock()

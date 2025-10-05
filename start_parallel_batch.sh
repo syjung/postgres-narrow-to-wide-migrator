@@ -11,7 +11,8 @@ cd "$(dirname "$0")"
 # 로그 디렉토리 생성
 mkdir -p logs
 
-# PostgreSQL 최적화 설정 (병렬 배치 처리용)
+# Dynamic PostgreSQL optimization settings based on ship count
+# This will be calculated at runtime based on target_ship_ids
 export PGOPTIONS="
     -c work_mem=64MB
     -c maintenance_work_mem=256MB
