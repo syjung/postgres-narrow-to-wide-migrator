@@ -54,12 +54,18 @@ from loguru import logger
 import time
 
 # 병렬 배치 처리용 로그 설정
+# 로그 파일명 규칙:
+# - parallel_batch.log: 현재 로그 (날짜 없음)
+# - parallel_batch_YYYY-MM-DD.log.gz: 이전 로그 (간단한 날짜 형식)
 logger.remove()
-logger.add('logs/parallel_batch.log', 
+
+# 간단한 날짜별 로그 로테이션 설정
+from clean_log_rotation import setup_clean_log_rotation
+current_log_file = setup_clean_log_rotation('logs/parallel_batch.log', retention_days=30)
+
+logger.add(current_log_file, 
            format='{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}',
-           level='INFO',
-           rotation='100 MB',
-           retention='7 days')
+           level='INFO')
 
 logger.add(sys.stdout, 
            format='<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}',

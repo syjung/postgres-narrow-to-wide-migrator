@@ -40,8 +40,8 @@ class MigrationMonitor:
             sink=self.log_file,
             level=logging_config.level,
             format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
-            rotation=logging_config.max_file_size,
-            retention=logging_config.backup_count,
+            rotation=logging_config.rotation,
+            retention=logging_config.retention,
             compression="zip"
         )
     

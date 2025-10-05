@@ -150,8 +150,8 @@ class LoggingConfig(BaseSettings):
     """Logging configuration"""
     level: str = "INFO"
     log_file: str = "logs/migration.log"
-    max_file_size: str = "10MB"
-    backup_count: int = 5
+    rotation: str = "1 day"  # Daily rotation
+    retention: str = "30 days"  # Keep logs for 30 days
 
 
 # Global configuration instances
