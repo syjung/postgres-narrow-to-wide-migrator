@@ -151,8 +151,8 @@ class ParallelBatchMigrator:
                 cutoff_time_manager.save_cutoff_time(cutoff_time)
                 logger.info(f"Global cutoff time saved: {cutoff_time}")
                 
-                # Save ship-specific cutoff times for completed ships
-                for ship_id in self.completed_ships:
+                # Save ship-specific cutoff times for ALL ships (not just completed ones)
+                for ship_id in migration_config.target_ship_ids:
                     cutoff_time_manager.save_ship_cutoff_time(ship_id, cutoff_time)
                     logger.debug(f"Ship cutoff time saved for {ship_id}: {cutoff_time}")
             else:
@@ -161,8 +161,8 @@ class ParallelBatchMigrator:
                 cutoff_time_manager.save_cutoff_time(current_cutoff)
                 logger.info(f"Global cutoff time set to current time: {current_cutoff}")
                 
-                # Save ship-specific cutoff times for completed ships
-                for ship_id in self.completed_ships:
+                # Save ship-specific cutoff times for ALL ships (not just completed ones)
+                for ship_id in migration_config.target_ship_ids:
                     cutoff_time_manager.save_ship_cutoff_time(ship_id, current_cutoff)
                     logger.debug(f"Ship cutoff time saved for {ship_id}: {current_cutoff}")
             
