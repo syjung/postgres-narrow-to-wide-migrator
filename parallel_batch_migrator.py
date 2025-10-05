@@ -188,6 +188,7 @@ class ParallelBatchMigrator:
     
     def _migrate_ship_safe(self, ship_id: str, cutoff_time: Optional[datetime] = None) -> Dict[str, Any]:
         """Thread-safe wrapper for ship migration with thread info"""
+        thread_logger = get_ship_thread_logger(ship_id)
         thread_id = threading.current_thread().ident
         thread_name = threading.current_thread().name
         
