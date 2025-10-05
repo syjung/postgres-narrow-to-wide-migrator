@@ -58,8 +58,8 @@ import time
 logger.remove()
 
 # 간단한 날짜별 로그 로테이션 설정
-from clean_log_rotation import setup_clean_log_rotation
-current_log_file = setup_clean_log_rotation('logs/batch.log', retention_days=30)
+from simple_log_rotation import setup_simple_log_rotation
+current_log_file = setup_simple_log_rotation('logs/batch.log', retention_days=30)
 
 logger.add(current_log_file, 
            format='{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}',
