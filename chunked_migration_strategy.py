@@ -458,15 +458,34 @@ class ChunkedMigrationStrategy:
             data_columns = len(columns) - 1  # created_time 제외
             time_range = f"{min(row['created_time'] for row in batch_data)} ~ {max(row['created_time'] for row in batch_data)}"
             
+            # ✅ 데이터 삽입 검증 (실제로 데이터가 들어갔는지 확인)
+            start_time = min(row['created_time'] for row in batch_data)
+            end_time = max(row['created_time'] for row in batch_data)
+            verify_query = f"""
+            SELECT COUNT(*) as count 
+            FROM tenant.{table_name} 
+            WHERE created_time >= %s AND created_time <= %s
+            """
+            verify_result = db_manager.execute_query(verify_query, (start_time, end_time))
+            actual_count = verify_result[0]['count'] if verify_result else 0
+            
             logger.info(f"✅ BATCH INSERT SUCCESS: {table_name}")
-            logger.info(f"   📊 Records: {len(batch_data)} rows inserted")
+            logger.info(f"   📊 Records: {len(batch_data)} rows processed")
             logger.info(f"   📊 Columns: {data_columns} data columns (total: {len(columns)})")
             logger.info(f"   📊 Time Range: {time_range}")
             logger.info(f"   📊 Affected Rows: {affected_rows}")
+            logger.info(f"   ✅ Verified Count: {actual_count} rows in database")
+            
+            # 검증 실패 시 경고
+            if actual_count == 0:
+                logger.error(f"❌ VERIFICATION FAILED: No data found in database after insert!")
+                logger.error(f"   This indicates a transaction commit issue")
+            elif actual_count != len(batch_data):
+                logger.warning(f"⚠️ Count mismatch: Expected {len(batch_data)}, Found {actual_count}")
             
             # Status tracking log for check_status.sh
             ship_id = table_name.split('_')[-1].lower()  # Extract ship_id from table_name
-            logger.info(f"STATUS:BATCH:{ship_id}:{len(batch_data)}:{data_columns}:{time_range}:{affected_rows}")
+            logger.info(f"STATUS:BATCH:{ship_id}:{len(batch_data)}:{data_columns}:{time_range}:{affected_rows}:{actual_count}")
             
             return affected_rows
             

@@ -194,11 +194,32 @@ class DatabaseManager:
     
     def execute_batch(self, query: str, data: List[tuple]) -> int:
         """Execute batch insert/update (optimized with connection pool)"""
-        with self.get_cursor() as cursor:
+        conn = None
+        cursor = None
+        try:
+            conn = self.get_connection()
+            # ❗ executemany를 위해 autocommit을 False로 설정 (명시적 트랜잭션)
+            conn.autocommit = False
+            cursor = conn.cursor()
+            
             cursor.executemany(query, data)
             affected_rows = cursor.rowcount
-            logger.debug(f"📦 Batch executed: {affected_rows} rows affected")
+            
+            # ✅ 명시적 커밋
+            conn.commit()
+            logger.debug(f"📦 Batch executed and committed: {affected_rows} rows affected")
             return affected_rows
+            
+        except Exception as e:
+            if conn and not conn.autocommit:
+                conn.rollback()
+                logger.error(f"❌ Batch execution failed, rolled back: {e}")
+            raise
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                self.return_connection(conn)
     
     def get_table_info(self, table_name: str) -> Dict[str, Any]:
         """Get table information including columns and constraints"""
