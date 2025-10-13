@@ -124,6 +124,10 @@ logs/
 migration_cutoff_time.txt
 *.log
 
+# Reprocess specific
+failed_chunks_after_reprocess.csv
+post_proc.csv
+
 # IDE
 .vscode/
 .idea/

@@ -460,6 +460,74 @@ python run_tests.py --no-coverage
 python run_tests.py --verbose
 ```
 
+## 실패한 청크 재처리 (Failed Chunk Reprocessing)
+
+패러럴 배치 처리 중 connection timeout 등으로 실패한 청크들을 재처리하는 도구입니다.
+
+### 빠른 시작
+
+```bash
+# 1. Dry-run으로 먼저 확인 (권장)
+./reprocess_failed_chunks.sh --dry-run
+
+# 2. 특정 선박만 테스트
+./reprocess_failed_chunks.sh --ship IMO9986063
+
+# 3. 전체 재처리 실행
+./reprocess_failed_chunks.sh
+```
+
+### 주요 기능
+
+- **Dry-run 모드**: 실제 처리 전에 무엇이 처리될지 미리 확인
+- **선박별 필터링**: 특정 선박만 선택적으로 재처리
+- **지연 시간 조절**: DB 부하에 따라 처리 속도 조절
+- **실패 추적**: 여전히 실패한 청크를 별도 CSV로 저장
+
+### 사용 예제
+
+```bash
+# 기본 실행
+./reprocess_failed_chunks.sh
+
+# 다른 CSV 파일 사용
+./reprocess_failed_chunks.sh my_failed_chunks.csv
+
+# 특정 선박만 처리 (IMO9986063)
+./reprocess_failed_chunks.sh --ship IMO9986063
+
+# 지연 시간 증가 (DB 부하가 높을 때)
+./reprocess_failed_chunks.sh -d 1.0
+
+# Python 직접 실행
+python3 reprocess_failed_chunks.py --help
+python3 reprocess_failed_chunks.py --dry-run
+python3 reprocess_failed_chunks.py -f post_proc.csv --ship IMO9986063
+```
+
+### CSV 파일 형식
+
+실패한 청크 목록은 다음 형식의 CSV 파일로 제공됩니다:
+
+```csv
+IMO9986063,2025-06-15 14:40:40.388958,2025-06-15 20:40:40.388958
+IMO9986104,2025-07-16 02:40:40.394745,2025-07-16 08:40:40.394745
+```
+
+각 라인: `선박ID,시작시간,종료시간`
+
+### 상세 문서
+
+- 📖 [빠른 시작 가이드](./QUICK_START_REPROCESS.md) - 간단한 사용법
+- 📚 [상세 가이드](./REPROCESS_GUIDE.md) - 자세한 설명과 문제 해결
+
+### 추천 워크플로우
+
+1. **확인**: `--dry-run`으로 처리될 내용 확인
+2. **테스트**: 한 선박만 먼저 테스트 실행
+3. **전체**: 모든 실패한 청크 재처리
+4. **재시도**: 여전히 실패한 청크가 있다면 재시도
+
 ## 주의사항
 
 1. **백업**: 마이그레이션 전 반드시 데이터베이스 백업을 수행하세요.
