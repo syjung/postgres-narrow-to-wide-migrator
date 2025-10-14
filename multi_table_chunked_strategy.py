@@ -226,7 +226,26 @@ class MultiTableChunkedStrategy:
             if row['data_channel_id'] in all_channels
         ]
         
-        thread_logger.debug(f"   📊 Fetched {len(result)} rows, filtered to {len(filtered_result)} rows")
+        thread_logger.info(f"   📊 Fetched {len(result):,} rows, filtered to {len(filtered_result):,} rows")
+        
+        # Debugging: Show sample channels if filtering removed everything
+        if len(result) > 0 and len(filtered_result) == 0:
+            thread_logger.warning(f"⚠️ All {len(result):,} rows were filtered out!")
+            
+            # Show sample of fetched channels
+            sample_fetched = set(row['data_channel_id'] for row in result[:10])
+            thread_logger.warning(f"   Sample fetched channels: {list(sample_fetched)[:3]}")
+            
+            # Show sample of allowed channels
+            sample_allowed = list(all_channels)[:3]
+            thread_logger.warning(f"   Sample allowed channels: {sample_allowed}")
+            
+            # Check if it's a prefix mismatch issue
+            if len(sample_fetched) > 0 and len(sample_allowed) > 0:
+                fetched_first = list(sample_fetched)[0]
+                allowed_first = sample_allowed[0]
+                thread_logger.warning(f"   Fetched starts with '/': {fetched_first.startswith('/')}")
+                thread_logger.warning(f"   Allowed starts with '/': {allowed_first.startswith('/')}")
         
         return filtered_result
     
