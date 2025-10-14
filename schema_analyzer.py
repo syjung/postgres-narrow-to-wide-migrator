@@ -9,18 +9,29 @@ from config import migration_config
 
 
 class SchemaAnalyzer:
-    """Analyzes narrow table data to generate wide table schemas"""
+    """
+    Analyzes narrow table data to generate wide table schemas
+    
+    ⚠️ NOTE: This is only used in Legacy Single-Table mode.
+    Multi-Table mode uses channel_router and multi_table_generator instead.
+    """
     
     def __init__(self):
         self.value_format_mapping = migration_config.VALUE_FORMAT_MAPPING
-        self.allowed_columns = self._load_allowed_columns()
+        # Only load allowed columns if NOT in Multi-Table mode
+        if not migration_config.use_multi_table:
+            self.allowed_columns = self._load_allowed_columns()
+            logger.info(f"📋 SchemaAnalyzer: Legacy mode, {len(self.allowed_columns)} allowed columns")
+        else:
+            self.allowed_columns = set()
+            logger.debug(f"📋 SchemaAnalyzer: Multi-Table mode, schema_analyzer not used")
     
     def _load_allowed_columns(self) -> set:
-        """Load allowed columns from column_list.txt"""
+        """Load allowed columns from column_list.txt (Legacy mode only)"""
         try:
             with open('column_list.txt', 'r', encoding='utf-8') as f:
                 columns = {line.strip() for line in f if line.strip()}
-            logger.info(f"✅ Loaded {len(columns)} allowed columns from column_list.txt")
+            logger.debug(f"✅ Loaded {len(columns)} allowed columns from column_list.txt")
             return columns
         except FileNotFoundError:
             logger.warning("⚠️ column_list.txt not found, using empty allowed columns set")
