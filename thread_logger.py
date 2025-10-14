@@ -139,6 +139,12 @@ def get_ship_thread_logger(ship_id: str) -> ThreadLogger:
     return _thread_loggers[thread_id]
 
 
+def get_current_thread_logger() -> Optional[ThreadLogger]:
+    """Get the thread logger for current thread (if exists)"""
+    thread_id = threading.current_thread().ident
+    return _thread_loggers.get(thread_id)
+
+
 def clear_thread_logger():
     """Clear thread logger for current thread (cleanup)"""
     thread_id = threading.current_thread().ident

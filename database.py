@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Generator
 from loguru import logger
 from config import db_config, migration_config
+from thread_logger import get_current_thread_logger
 
 
 class DatabaseManager:
@@ -172,13 +173,22 @@ class DatabaseManager:
                         row_dict[columns[i]] = value
                 result.append(row_dict)
             
-            # Log query completion for large table queries (simplified)
+            # Log query completion for large table queries (with thread context)
             if 'tbl_data_timeseries' in query:
                 end_time = time.time()
                 execution_time = end_time - start_time
-                if execution_time > 5.0:
-                    logger.warning(f"⚠️ Slow query detected: {execution_time:.2f}s execution time")
-                logger.info(f"✅ Large table query completed: {len(result)} rows in {execution_time:.2f}s")
+                
+                # Use thread logger if available (for ship-specific logging)
+                thread_logger = get_current_thread_logger()
+                if thread_logger:
+                    if execution_time > 5.0:
+                        thread_logger.warning(f"⚠️ Slow query detected: {execution_time:.2f}s execution time")
+                    thread_logger.info(f"✅ Large table query completed: {len(result)} rows in {execution_time:.2f}s")
+                else:
+                    # Fallback to global logger
+                    if execution_time > 5.0:
+                        logger.warning(f"⚠️ Slow query detected: {execution_time:.2f}s execution time")
+                    logger.info(f"✅ Large table query completed: {len(result)} rows in {execution_time:.2f}s")
             else:
                 logger.debug(f"📊 Query executed: {len(result)} rows returned")
             
