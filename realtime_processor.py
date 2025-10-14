@@ -571,7 +571,7 @@ class RealTimeProcessor:
         for table_type in self.channel_router.get_all_table_types():
             if table_data[table_type]:
                 table_name = f"{table_type}_{ship_id.lower()}"
-                thread_logger.debug(f"💾 Inserting {len(table_data[table_type])} rows into {table_name}")
+                thread_logger.info(f"💾 Inserting {len(table_data[table_type])} rows into {table_name}")
                 self._insert_batch_data(table_data[table_type], table_name, thread_logger)
     
     def _process_batch(self, batch_data: List[Dict[str, Any]], table_name: str, thread_logger=None):
@@ -879,14 +879,14 @@ class RealTimeProcessor:
             thread_logger = get_ship_thread_logger(ship_id)
         
         try:
-            # Use multi_table_generator to create all tables
+            # Use multi_table_generator to create all tables (quietly if already exist)
             success = self.table_generator.ensure_all_tables_exist(ship_id)
             
-            if success:
-                thread_logger.debug(f"All 3 tables ready for {ship_id}")
-            else:
+            if not success:
                 thread_logger.error(f"Failed to create tables for {ship_id}")
                 raise RuntimeError(f"Table creation failed for {ship_id}")
+            
+            # Tables ready (log message handled by multi_table_generator)
                 
         except Exception as e:
             thread_logger.error(f"Error ensuring multi-tables for {ship_id}: {e}")

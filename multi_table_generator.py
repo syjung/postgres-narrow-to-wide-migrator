@@ -24,31 +24,46 @@ class MultiTableGenerator:
         Returns:
             성공 여부
         """
-        logger.info(f"🚢 Ensuring all tables exist for ship: {ship_id}")
+        logger.debug(f"Checking tables for ship: {ship_id}")
         
         try:
-            # 3개 테이블 모두 생성
+            # 3개 테이블 모두 생성 (이미 있으면 스킵)
             success = True
+            tables_created = 0
             
             # 1. Auxiliary Systems
-            if not self.create_auxiliary_systems_table(ship_id):
+            created = self.create_auxiliary_systems_table(ship_id)
+            if not created:
                 logger.error(f"❌ Failed to create auxiliary_systems table for {ship_id}")
                 success = False
+            elif created == "created":  # 새로 생성됨
+                tables_created += 1
             
             # 2. Engine Generator
-            if not self.create_engine_generator_table(ship_id):
+            created = self.create_engine_generator_table(ship_id)
+            if not created:
                 logger.error(f"❌ Failed to create engine_generator table for {ship_id}")
                 success = False
+            elif created == "created":  # 새로 생성됨
+                tables_created += 1
             
             # 3. Navigation Ship
-            if not self.create_navigation_ship_table(ship_id):
+            created = self.create_navigation_ship_table(ship_id)
+            if not created:
                 logger.error(f"❌ Failed to create navigation_ship table for {ship_id}")
                 success = False
+            elif created == "created":  # 새로 생성됨
+                tables_created += 1
             
             if success:
-                # 인덱스 생성
+                # 인덱스 생성 (조용히)
                 self.create_indexes(ship_id)
-                logger.success(f"✅ All tables created successfully for {ship_id}")
+                
+                # 새로 생성된 테이블이 있을 때만 로그
+                if tables_created > 0:
+                    logger.success(f"✅ Created {tables_created} new tables for {ship_id}")
+                else:
+                    logger.debug(f"All tables already exist for {ship_id}")
             
             return success
             
@@ -107,7 +122,7 @@ class MultiTableGenerator:
         
         return self._create_table(table_name, channels, "Navigation Ship")
     
-    def _create_table(self, table_name: str, channels: Set[str], description: str) -> bool:
+    def _create_table(self, table_name: str, channels: Set[str], description: str):
         """
         테이블 생성 (공통 로직)
         
@@ -117,16 +132,16 @@ class MultiTableGenerator:
             description: 테이블 설명
             
         Returns:
-            성공 여부
+            "created" if newly created, True if already exists, False if failed
         """
-        logger.info(f"📋 Creating {description} table: {table_name}")
-        logger.info(f"   📊 Channels: {len(channels)}")
-        
         try:
             # 테이블 존재 확인
             if db_manager.check_table_exists(table_name):
-                logger.info(f"✅ Table {table_name} already exists, skipping creation")
+                logger.debug(f"Table {table_name} already exists")
                 return True
+            
+            # 새로 생성
+            logger.info(f"📋 Creating {description} table: {table_name} ({len(channels)} channels)")
             
             # CREATE TABLE SQL 생성
             create_sql = self._generate_create_table_sql(table_name, channels)
@@ -135,7 +150,7 @@ class MultiTableGenerator:
             db_manager.execute_update(create_sql)
             
             logger.success(f"✅ Successfully created table: {table_name}")
-            return True
+            return "created"
             
         except Exception as e:
             logger.error(f"❌ Failed to create table {table_name}: {e}")
@@ -213,7 +228,7 @@ class MultiTableGenerator:
         Args:
             ship_id: 선박 ID
         """
-        logger.info(f"📊 Creating indexes for ship: {ship_id}")
+        logger.debug(f"Checking indexes for ship: {ship_id}")
         
         # 3개 테이블에 대해 인덱스 생성
         tables = [
@@ -222,11 +237,17 @@ class MultiTableGenerator:
             f"navigation_ship_{ship_id.lower()}"
         ]
         
+        indexes_created = 0
         for table_name in tables:
             try:
-                self._create_brin_index(table_name)
+                created = self._create_brin_index(table_name)
+                if created:
+                    indexes_created += 1
             except Exception as e:
                 logger.warning(f"⚠️ Failed to create index for {table_name}: {e}")
+        
+        if indexes_created > 0:
+            logger.info(f"✅ Created {indexes_created} new indexes for {ship_id}")
     
     def _create_brin_index(self, table_name: str):
         """
@@ -234,6 +255,9 @@ class MultiTableGenerator:
         
         Args:
             table_name: 테이블명
+            
+        Returns:
+            True if newly created, False if already exists or failed
         """
         index_name = f"idx_{table_name}_created_time"
         
@@ -250,8 +274,8 @@ class MultiTableGenerator:
         
         result = db_manager.execute_query(check_sql, (table_name, index_name))
         if result and result[0].get('exists', False):
-            logger.debug(f"✅ Index {index_name} already exists")
-            return
+            logger.debug(f"Index {index_name} already exists")
+            return False
         
         # BRIN 인덱스 생성
         create_index_sql = f"""
@@ -262,7 +286,8 @@ class MultiTableGenerator:
         """
         
         db_manager.execute_update(create_index_sql)
-        logger.success(f"✅ Created BRIN index: {index_name}")
+        logger.info(f"✅ Created BRIN index: {index_name}")
+        return True
     
     def drop_all_tables(self, ship_id: str) -> bool:
         """
