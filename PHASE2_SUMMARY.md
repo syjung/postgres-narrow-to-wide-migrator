@@ -82,7 +82,7 @@ Realtime Processor가 이제 **3개 테이블로 데이터를 분산 저장**하
 -- 1,037개 컬럼 스캔
 SELECT created_time, hs4sd_v1_me01_rpm_speed, hs4sd_v1_me01_per_load
 FROM tbl_data_timeseries_imo9976903
-WHERE created_time > NOW() - INTERVAL '1 hour';
+WHERE created_time >= NOW() - INTERVAL '1 hour';
 ```
 
 #### After (Multi-Table)
@@ -90,7 +90,7 @@ WHERE created_time > NOW() - INTERVAL '1 hour';
 -- 651개 컬럼 스캔 (37% 감소)
 SELECT created_time, hs4sd_v1_me01_rpm_speed, hs4sd_v1_me01_per_load
 FROM engine_generator_imo9976903
-WHERE created_time > NOW() - INTERVAL '1 hour';
+WHERE created_time >= NOW() - INTERVAL '1 hour';
 ```
 
 ### 처리 성능

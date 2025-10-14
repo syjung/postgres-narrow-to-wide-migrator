@@ -27,7 +27,7 @@ SELECT
     value_format
 FROM tenant.tbl_data_timeseries 
 WHERE ship_id = 'IMO9999994' 
-AND created_time > NOW() - INTERVAL '2 minutes'
+AND created_time >= NOW() - INTERVAL '2 minutes'
 ORDER BY created_time ASC
 LIMIT 1000;
 
@@ -45,7 +45,7 @@ SELECT
     double_v,
     value_format
 FROM tenant.tbl_data_timeseries 
-WHERE created_time > NOW() - INTERVAL '2 minutes'
+WHERE created_time >= NOW() - INTERVAL '2 minutes'
 AND ship_id = 'IMO9999994'
 ORDER BY created_time ASC
 LIMIT 10000;
@@ -59,7 +59,7 @@ SELECT
     COUNT(*) as records_per_minute,
     COUNT(DISTINCT ship_id) as ships_per_minute
 FROM tenant.tbl_data_timeseries 
-WHERE created_time > NOW() - INTERVAL '10 minutes'
+WHERE created_time >= NOW() - INTERVAL '10 minutes'
 GROUP BY DATE_TRUNC('minute', created_time)
 ORDER BY minute_batch DESC;
 
@@ -78,7 +78,7 @@ SELECT
     double_v,
     value_format
 FROM tenant.tbl_data_timeseries 
-WHERE created_time > NOW() - INTERVAL '1 minute'
+WHERE created_time >= NOW() - INTERVAL '1 minute'
 AND ship_id = 'IMO9999994'
 ORDER BY created_time ASC
 LIMIT 10000;

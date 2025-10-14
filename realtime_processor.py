@@ -455,14 +455,14 @@ class RealTimeProcessor:
             double_v,
             value_format
         FROM tenant.tbl_data_timeseries 
-        WHERE created_time > %s
+        WHERE created_time >= %s
         AND ship_id = %s
         ORDER BY created_time ASC
         """
         
         start_time_query = time.time()
         thread_logger.info(f"🚀 Executing time-index-optimized query...")
-        thread_logger.info(f"📊 Time range: created_time > {actual_cutoff}")
+        thread_logger.info(f"📊 Time range: created_time >= {actual_cutoff}")
         
         try:
             result = db_manager.execute_query(query, (actual_cutoff, ship_id))
@@ -506,7 +506,7 @@ class RealTimeProcessor:
                     value_format
                 FROM tenant.tbl_data_timeseries 
                 WHERE ship_id = %s 
-                AND created_time > %s
+                AND created_time >= %s
                 ORDER BY created_time ASC
                 LIMIT 1000
                 """
