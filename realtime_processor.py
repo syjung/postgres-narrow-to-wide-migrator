@@ -555,13 +555,17 @@ class RealTimeProcessor:
         
         thread_logger.info(f"   🔍 Table types in use: {self.channel_router.get_all_table_types()}")
         
+        # Log all timestamps before processing
+        all_timestamps = sorted(grouped_data.keys())
+        thread_logger.info(f"   📅 All timestamps in batch: {[ts.strftime('%H:%M:%S') for ts in all_timestamps]}")
+        
         for timestamp, channels in grouped_data.items():
             # Skip if already processed
             if timestamp in self.processed_timestamps:
-                thread_logger.debug(f"   ⏭️ Skipping already processed timestamp: {timestamp}")
+                thread_logger.warning(f"   ⏭️ Skipping already processed timestamp: {timestamp} ({len(channels)} channels)")
                 continue
             
-            thread_logger.debug(f"   🔄 Processing timestamp {timestamp}: {len(channels)} channels")
+            thread_logger.info(f"   🔄 Processing timestamp {timestamp}: {len(channels)} channels")
             
             # Debug: Show sample raw channels
             if len(channels) > 0:
