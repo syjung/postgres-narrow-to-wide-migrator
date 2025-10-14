@@ -252,7 +252,7 @@ class RealTimeProcessor:
     
     def _process_ship_data_safe(self, ship_id: str) -> Dict[str, Any]:
         """Thread-safe wrapper for ship data processing with thread info"""
-        thread_logger = get_ship_thread_logger(ship_id)
+        thread_logger = get_ship_thread_logger(ship_id, mode="realtime")
         
         thread_logger.info(f"🚢 Starting processing for ship: {ship_id}")
         

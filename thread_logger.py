@@ -17,36 +17,42 @@ _ship_log_handlers = {}
 class ThreadLogger:
     """Thread-aware logger that includes ship ID and thread ID in all log messages"""
     
-    def __init__(self, ship_id: Optional[str] = None):
+    def __init__(self, ship_id: Optional[str] = None, mode: str = "unknown"):
         self.ship_id = ship_id
+        self.mode = mode  # realtime, batch, unknown
         self.thread_id = threading.current_thread().ident
         self.thread_name = threading.current_thread().name
         
         # Add ship-specific log file if enabled
         if ship_id and ENABLE_SHIP_LOG_FILES:
-            self._ensure_ship_log_file(ship_id)
+            self._ensure_ship_log_file(ship_id, mode)
     
-    def set_ship_id(self, ship_id: str):
+    def set_ship_id(self, ship_id: str, mode: str = None):
         """Set ship ID for this logger instance"""
         self.ship_id = ship_id
+        if mode:
+            self.mode = mode
         
         # Add ship-specific log file if not already added
         if ship_id and ENABLE_SHIP_LOG_FILES:
-            self._ensure_ship_log_file(ship_id)
+            self._ensure_ship_log_file(ship_id, self.mode)
     
-    def _ensure_ship_log_file(self, ship_id: str):
+    def _ensure_ship_log_file(self, ship_id: str, mode: str = "unknown"):
         """Ensure ship-specific log file exists (thread-safe)"""
         # Use global cache to avoid adding the same handler multiple times
         global _ship_log_handlers
         
-        if ship_id in _ship_log_handlers:
+        # Cache key includes both ship_id and mode
+        cache_key = f"{ship_id}_{mode}"
+        
+        if cache_key in _ship_log_handlers:
             return  # Already added
         
         # Create logs directory if needed
         os.makedirs('logs', exist_ok=True)
         
-        # Add ship-specific log file
-        ship_log_file = f'logs/ship_{ship_id}.log'
+        # Add ship-specific log file with mode suffix
+        ship_log_file = f'logs/ship_{ship_id}_{mode}.log'
         
         try:
             handler_id = logger.add(
@@ -59,7 +65,7 @@ class ThreadLogger:
                 filter=lambda record: ship_id in record['message']  # Only log messages for this ship
             )
             
-            _ship_log_handlers[ship_id] = handler_id
+            _ship_log_handlers[cache_key] = handler_id
             logger.debug(f"Added ship-specific log file: {ship_log_file}")
             
         except Exception as e:
@@ -127,14 +133,14 @@ def log_with_ship_thread(ship_id: str, message: str, level: str = "info"):
 _thread_loggers = {}
 
 
-def get_ship_thread_logger(ship_id: str) -> ThreadLogger:
-    """Get or create a thread logger for a specific ship"""
+def get_ship_thread_logger(ship_id: str, mode: str = "unknown") -> ThreadLogger:
+    """Get or create a thread logger for a specific ship and mode"""
     thread_id = threading.current_thread().ident
     
     if thread_id not in _thread_loggers:
-        _thread_loggers[thread_id] = ThreadLogger(ship_id)
+        _thread_loggers[thread_id] = ThreadLogger(ship_id, mode)
     else:
-        _thread_loggers[thread_id].set_ship_id(ship_id)
+        _thread_loggers[thread_id].set_ship_id(ship_id, mode)
     
     return _thread_loggers[thread_id]
 
