@@ -258,13 +258,26 @@ class ParallelBatchMigrator:
             
             # Use appropriate migration strategy
             total_records = 0
+            total_narrow_records = 0
+            start_migration_time = time.time()
             
             # Get data chunks
             chunks = list(self.migration_strategy.get_data_chunks(ship_id, cutoff_time))
-            thread_logger.info(f"📊 Found {len(chunks)} chunks to process")
+            total_chunks = len(chunks)
+            thread_logger.info(f"📊 Found {total_chunks} chunks to process")
             
-            for i, (start_time, end_time) in enumerate(chunks):
-                thread_logger.info(f"🔄 Processing chunk {i+1}/{len(chunks)}: {start_time} to {end_time}")
+            if total_chunks > 0:
+                first_chunk_start = chunks[0][0]
+                last_chunk_end = chunks[-1][1]
+                thread_logger.info(f"📅 Time range: {first_chunk_start} to {last_chunk_end}")
+            
+            for i, (start_time, end_time) in enumerate(chunks, 1):
+                chunk_start_time = time.time()
+                progress_pct = (i / total_chunks) * 100
+                
+                thread_logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                thread_logger.info(f"🔄 Chunk {i}/{total_chunks} ({progress_pct:.1f}%)")
+                thread_logger.info(f"📅 Date range: {start_time} to {end_time}")
                 
                 try:
                     if self.use_multi_table:
@@ -278,19 +291,43 @@ class ParallelBatchMigrator:
                             ship_id, start_time, end_time, table_name, thread_logger
                         )
                     
+                    chunk_duration = time.time() - chunk_start_time
+                    
                     if chunk_result['status'] == 'completed':
                         records_processed = chunk_result.get('records_processed', 0)
+                        narrow_records = chunk_result.get('narrow_records', 0)
                         total_records += records_processed
-                        thread_logger.success(f"Chunk {i+1} completed: {records_processed} records")
+                        total_narrow_records += narrow_records
+                        
+                        thread_logger.success(f"✅ Chunk {i}/{total_chunks} completed in {chunk_duration:.2f}s")
+                        
+                        # Calculate ETA
+                        elapsed_time = time.time() - start_migration_time
+                        avg_time_per_chunk = elapsed_time / i
+                        remaining_chunks = total_chunks - i
+                        eta_seconds = avg_time_per_chunk * remaining_chunks
+                        eta_minutes = eta_seconds / 60
+                        
+                        thread_logger.info(f"📊 Progress: {i}/{total_chunks} chunks ({progress_pct:.1f}%)")
+                        thread_logger.info(f"📊 Speed: {chunk_duration:.2f}s/chunk, Avg: {avg_time_per_chunk:.2f}s/chunk")
+                        thread_logger.info(f"📊 ETA: {eta_minutes:.1f} minutes ({remaining_chunks} chunks remaining)")
+                        thread_logger.info(f"📊 Total so far: {total_narrow_records:,} narrow → {total_records:,} wide records")
+                        
                     else:
-                        thread_logger.info(f"⏭️ Chunk {i+1} skipped: {chunk_result.get('message', 'No data')}")
+                        thread_logger.info(f"⏭️ Chunk {i}/{total_chunks} skipped in {chunk_duration:.2f}s: {chunk_result.get('message', 'No data')}")
                         
                 except Exception as e:
-                    thread_logger.error(f"Chunk {i+1} failed: {e}")
+                    chunk_duration = time.time() - chunk_start_time
+                    thread_logger.error(f"❌ Chunk {i}/{total_chunks} failed after {chunk_duration:.2f}s: {e}")
                     # Continue with next chunk instead of failing entire ship
                     continue
             
-            thread_logger.success(f"Ship migration completed: {total_records} total records")
+            total_migration_time = time.time() - start_migration_time
+            thread_logger.success(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            thread_logger.success(f"🎉 Ship migration completed: {ship_id}")
+            thread_logger.success(f"📊 Total time: {total_migration_time:.2f}s ({total_migration_time/60:.1f} minutes)")
+            thread_logger.success(f"📊 Chunks processed: {total_chunks}")
+            thread_logger.success(f"📊 Records: {total_narrow_records:,} narrow → {total_records:,} wide")
             
             result = {
                 'success': True,
