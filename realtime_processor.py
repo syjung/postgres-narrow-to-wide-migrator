@@ -418,19 +418,14 @@ class RealTimeProcessor:
         
         # Thread-safe cutoff time update - REALTIME-specific
         with self.cutoff_lock:
-            # ✅ Save REALTIME-specific cutoff time
+            # ✅ Save REALTIME-specific cutoff time only
             cutoff_time_manager.save_realtime_cutoff_time(ship_id, timestamp)
-            
-            # Legacy: Also update for backward compatibility
-            cutoff_time_manager.save_ship_cutoff_time(ship_id, timestamp)
-            cutoff_time_manager.save_cutoff_time(timestamp)
             
             # Mark the target minute as processed
             window = cutoff_strategy.get_processing_window()
             cutoff_strategy.mark_minute_processed(window['target_minute'])
             
             logger.debug(f"Updated REALTIME cutoff time to {timestamp} for ship {ship_id}")
-            logger.debug(f"Updated legacy cutoff times for backward compatibility")
             logger.debug(f"Marked minute {window['target_minute']} as processed")
     
     def _get_new_data(self, ship_id: str, cutoff_time: datetime, thread_logger=None) -> List[Dict[str, Any]]:
@@ -577,12 +572,15 @@ class RealTimeProcessor:
             for table_type in self.channel_router.get_all_table_types():
                 table_name = f"tbl_data_timeseries_{ship_id.lower()}_{table_type}"
                 
-                # Debug: Check first channel routing
+                # Debug: Check channel routing for this table type
                 if len(channels) > 0:
-                    first_channel_id = channels[0]['data_channel_id']
-                    detected_type = self.channel_router.get_table_type(first_channel_id)
-                    thread_logger.info(f"      🔍 Testing channel: '{first_channel_id}'")
-                    thread_logger.info(f"      🔍 Detected type: '{detected_type}' (expecting '{table_type}')")
+                    # Check first 3 channels
+                    for idx, ch in enumerate(channels[:3]):
+                        ch_id = ch['data_channel_id']
+                        detected_type = self.channel_router.get_table_type(ch_id)
+                        match_status = "✅ MATCH" if detected_type == table_type else "❌ NO MATCH"
+                        thread_logger.info(f"      🔍 Channel[{idx}]: '{ch_id}'")
+                        thread_logger.info(f"         Detected: '{detected_type}' | Expecting: '{table_type}' | {match_status}")
                 
                 # Filter channels for this table
                 filtered_channels = [
@@ -590,8 +588,17 @@ class RealTimeProcessor:
                     if self.channel_router.get_table_type(ch['data_channel_id']) == table_type
                 ]
                 
+                thread_logger.info(f"      📊 Filtering: {len(channels)} total → {len(filtered_channels)} for table {table_type}")
+                
                 if not filtered_channels:
-                    thread_logger.info(f"      ⚠️ No channels for {table_type} at {timestamp}")
+                    thread_logger.warning(f"      ⚠️ No channels matched table {table_type} at {timestamp}")
+                    
+                    # Additional debug: Show what types were detected
+                    detected_types = {}
+                    for ch in channels[:10]:
+                        dt = self.channel_router.get_table_type(ch['data_channel_id'])
+                        detected_types[dt] = detected_types.get(dt, 0) + 1
+                    thread_logger.warning(f"         Types found in sample: {detected_types}")
                     continue
                 
                 thread_logger.info(f"      ✅ {table_type}: {len(filtered_channels)} channels at {timestamp}")
