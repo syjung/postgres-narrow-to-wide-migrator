@@ -156,28 +156,20 @@ class ParallelBatchMigrator:
                 'cutoff_time': cutoff_time.isoformat() if cutoff_time else None
             }
             
-            # Save cutoff time for real-time processing (ship-specific)
+            # Save global cutoff time (ship-specific times already updated per chunk)
             from cutoff_time_manager import cutoff_time_manager
             
             if cutoff_time:
                 # Save global cutoff time for backward compatibility
                 cutoff_time_manager.save_cutoff_time(cutoff_time)
-                logger.info(f"Global cutoff time saved: {cutoff_time}")
-                
-                # Save ship-specific cutoff times for ALL ships (not just completed ones)
-                for ship_id in migration_config.target_ship_ids:
-                    cutoff_time_manager.save_ship_cutoff_time(ship_id, cutoff_time)
-                    logger.debug(f"Ship cutoff time saved for {ship_id}: {cutoff_time}")
+                logger.info(f"📅 Global cutoff time saved: {cutoff_time}")
+                logger.info(f"📅 Ship-specific cutoffs already updated incrementally during migration")
             else:
                 # Use current time as cutoff if not specified
                 current_cutoff = datetime.now()
                 cutoff_time_manager.save_cutoff_time(current_cutoff)
-                logger.info(f"Global cutoff time set to current time: {current_cutoff}")
-                
-                # Save ship-specific cutoff times for ALL ships (not just completed ones)
-                for ship_id in migration_config.target_ship_ids:
-                    cutoff_time_manager.save_ship_cutoff_time(ship_id, current_cutoff)
-                    logger.debug(f"Ship cutoff time saved for {ship_id}: {current_cutoff}")
+                logger.info(f"📅 Global cutoff time set to current time: {current_cutoff}")
+                logger.info(f"📅 Ship-specific cutoffs already updated incrementally during migration")
             
             logger.info(f"🎉 Parallel batch migration completed!")
             logger.info(f"   📊 Total ships: {summary['total_ships']}")
@@ -301,6 +293,12 @@ class ParallelBatchMigrator:
                         
                         thread_logger.success(f"✅ Chunk {i}/{total_chunks} completed in {chunk_duration:.2f}s")
                         
+                        # ✅ Update ship cutoff time after each successful chunk
+                        # This allows Realtime to start from the latest processed point
+                        from cutoff_time_manager import cutoff_time_manager
+                        cutoff_time_manager.save_ship_cutoff_time(ship_id, end_time)
+                        thread_logger.debug(f"💾 Updated cutoff time for {ship_id}: {end_time}")
+                        
                         # Calculate ETA
                         elapsed_time = time.time() - start_migration_time
                         avg_time_per_chunk = elapsed_time / i
@@ -312,9 +310,16 @@ class ParallelBatchMigrator:
                         thread_logger.info(f"📊 Speed: {chunk_duration:.2f}s/chunk, Avg: {avg_time_per_chunk:.2f}s/chunk")
                         thread_logger.info(f"📊 ETA: {eta_minutes:.1f} minutes ({remaining_chunks} chunks remaining)")
                         thread_logger.info(f"📊 Total so far: {total_narrow_records:,} narrow → {total_records:,} wide records")
+                        thread_logger.debug(f"📊 Cutoff time: {end_time}")
                         
                     else:
                         thread_logger.info(f"⏭️ Chunk {i}/{total_chunks} skipped in {chunk_duration:.2f}s: {chunk_result.get('message', 'No data')}")
+                        
+                        # ✅ Update cutoff time even for skipped chunks
+                        # So Realtime doesn't re-process empty time ranges
+                        from cutoff_time_manager import cutoff_time_manager
+                        cutoff_time_manager.save_ship_cutoff_time(ship_id, end_time)
+                        thread_logger.debug(f"💾 Updated cutoff time for skipped chunk: {end_time}")
                         
                 except Exception as e:
                     chunk_duration = time.time() - chunk_start_time
