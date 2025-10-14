@@ -107,11 +107,17 @@ class MultiTableChunkedStrategy:
             thread_logger.info(f"✅ Extracted {len(chunk_data)} records from narrow table")
             
             # Step 2: Transform to wide format
-            thread_logger.info(f"🔄 Transforming data to wide format...")
-            wide_data = self._transform_chunk_to_wide(chunk_data)
-            thread_logger.info(f"✅ Transformed to {len(wide_data)} wide records (grouped by timestamp)")
+            thread_logger.info(f"🔄 Transforming {len(chunk_data):,} narrow records to wide format...")
+            import time as time_module
+            transform_start = time_module.time()
+            
+            wide_data = self._transform_chunk_to_wide(chunk_data, thread_logger)
+            
+            transform_duration = time_module.time() - transform_start
+            thread_logger.info(f"✅ Transformed to {len(wide_data):,} wide records in {transform_duration:.2f}s (grouped by timestamp)")
             
             # Step 3: Split by table type and insert
+            thread_logger.info(f"🔄 Splitting data for 3 tables...")
             total_inserted = 0
             insert_summary = {}
             
@@ -119,20 +125,26 @@ class MultiTableChunkedStrategy:
                 table_name = f"{table_type}_{ship_id.lower()}"
                 
                 # Filter data for this table
+                filter_start = time_module.time()
                 table_data = self._filter_data_for_table(wide_data, table_type)
+                filter_duration = time_module.time() - filter_start
                 
                 if not table_data:
-                    thread_logger.debug(f"⏭️ No data for table: {table_name}")
+                    thread_logger.debug(f"⏭️ No data for table: {table_name} (filtered in {filter_duration:.2f}s)")
                     insert_summary[table_type] = 0
                     continue
                 
-                thread_logger.info(f"💾 Inserting {len(table_data)} records into {table_name}...")
+                thread_logger.info(f"✅ Filtered {len(table_data)} records for {table_name} in {filter_duration:.2f}s")
+                thread_logger.info(f"💾 Inserting {len(table_data):,} records into {table_name}...")
                 
                 try:
+                    insert_start = time_module.time()
                     inserted = self._insert_wide_data(table_name, table_data, thread_logger)
+                    insert_duration = time_module.time() - insert_start
+                    
                     total_inserted += inserted
                     insert_summary[table_type] = inserted
-                    thread_logger.success(f"✅ Inserted {inserted} records into {table_name}")
+                    thread_logger.success(f"✅ Inserted {inserted:,} records into {table_name} in {insert_duration:.2f}s ({inserted/insert_duration:.0f} rows/s)")
                     
                 except Exception as e:
                     thread_logger.error(f"❌ Failed to insert into {table_name}: {e}")
@@ -218,14 +230,22 @@ class MultiTableChunkedStrategy:
         
         return filtered_result
     
-    def _transform_chunk_to_wide(self, chunk_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _transform_chunk_to_wide(self, chunk_data: List[Dict[str, Any]], thread_logger=None) -> List[Dict[str, Any]]:
         """Transform chunk data to wide format"""
         from collections import defaultdict
+        import time as time_module
+        
+        total_rows = len(chunk_data)
         
         # Group by timestamp
         timestamp_groups = defaultdict(dict)
         
-        for row in chunk_data:
+        for idx, row in enumerate(chunk_data):
+            # Progress log for large datasets (every 100k rows)
+            if thread_logger and (idx + 1) % 100000 == 0:
+                progress_pct = ((idx + 1) / total_rows) * 100
+                thread_logger.info(f"   🔄 Grouping progress: {idx+1:,}/{total_rows:,} rows ({progress_pct:.1f}%)")
+            
             timestamp = row['created_time']
             channel_id = row['data_channel_id']
             value = row['value']
@@ -243,6 +263,9 @@ class MultiTableChunkedStrategy:
                 timestamp_groups[timestamp][col_name] = None
         
         # Convert to list of dicts
+        if thread_logger:
+            thread_logger.info(f"   🔄 Converting {len(timestamp_groups):,} timestamp groups to wide rows...")
+        
         wide_data = []
         for timestamp, values in sorted(timestamp_groups.items()):
             row = {'created_time': timestamp}
