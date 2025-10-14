@@ -565,6 +565,13 @@ class RealTimeProcessor:
             for table_type in self.channel_router.get_all_table_types():
                 table_name = f"tbl_{table_type}_{ship_id.lower()}"
                 
+                # Debug: Check first channel routing
+                if len(channels) > 0:
+                    first_channel_id = channels[0]['data_channel_id']
+                    detected_type = self.channel_router.get_table_type(first_channel_id)
+                    thread_logger.info(f"      🔍 Testing channel: '{first_channel_id}'")
+                    thread_logger.info(f"      🔍 Detected type: '{detected_type}' (expecting '{table_type}')")
+                
                 # Filter channels for this table
                 filtered_channels = [
                     ch for ch in channels 
