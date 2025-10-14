@@ -24,7 +24,7 @@ class MultiTableChunkedStrategy:
     
     def get_data_chunks(self, ship_id: str, cutoff_time: Optional[datetime] = None) -> List[Tuple[datetime, datetime]]:
         """
-        시간 범위를 청크로 분할 (고정 시간 범위 사용 - 빠름!)
+        시간 범위를 청크로 분할 (LIMIT 1로 실제 데이터 범위 빠르게 찾기)
         
         Args:
             ship_id: 선박 ID
@@ -35,21 +35,15 @@ class MultiTableChunkedStrategy:
         """
         logger.info(f"🔍 Getting data chunks for {ship_id} (cutoff: {cutoff_time})")
         
-        # 고정된 시간 범위 사용 (MIN/MAX 조회 없이 빠르게!)
-        # Batch migration은 최근 데이터만 처리 (Realtime이 나머지 처리)
-        if cutoff_time:
-            end_time = cutoff_time
-        else:
-            end_time = datetime.now()
+        # 실제 데이터 범위를 LIMIT 1로 빠르게 찾기
+        time_range = self._get_data_time_range_fast(ship_id, cutoff_time)
         
-        # 시작 시간: config에 설정된 기간만 처리 (더 빠르고 효율적)
-        # Realtime processor가 계속 최신 데이터를 처리하므로
-        # Batch는 초기 설정이나 재처리 용도로만 사용
-        lookback_days = migration_config.batch_migration_lookback_days
-        start_time = end_time - timedelta(days=lookback_days)
+        if not time_range:
+            logger.warning(f"⚠️ No data found for ship: {ship_id}")
+            return []
         
-        logger.info(f"📅 Using fixed time range: {start_time} to {end_time}")
-        logger.info(f"📅 This will cover the past {lookback_days} days of data")
+        start_time, end_time = time_range
+        logger.info(f"📅 Data range for {ship_id}: {start_time} to {end_time}")
         
         # Generate chunks
         chunks = []
@@ -65,6 +59,69 @@ class MultiTableChunkedStrategy:
         
         logger.info(f"📊 Generated {len(chunks)} chunks ({self.chunk_size_hours}-hour chunks)")
         return chunks
+    
+    def _get_data_time_range_fast(self, ship_id: str, cutoff_time: Optional[datetime] = None) -> Optional[Tuple[datetime, datetime]]:
+        """
+        LIMIT 1로 실제 데이터 범위를 빠르게 찾기 (인덱스 활용)
+        MIN/MAX aggregation보다 훨씬 빠름!
+        """
+        import time as time_module
+        
+        logger.info(f"🔍 Finding actual data range for {ship_id} (using LIMIT 1)...")
+        start_query_time = time_module.time()
+        
+        # Get earliest record (ORDER BY created_time ASC LIMIT 1)
+        earliest_query = """
+        SELECT created_time
+        FROM tenant.tbl_data_timeseries
+        WHERE ship_id = %s
+        """
+        earliest_params = [ship_id]
+        
+        if cutoff_time:
+            earliest_query += " AND created_time < %s"
+            earliest_params.append(cutoff_time)
+        
+        earliest_query += " ORDER BY created_time ASC LIMIT 1"
+        
+        # Get latest record (ORDER BY created_time DESC LIMIT 1)
+        latest_query = """
+        SELECT created_time
+        FROM tenant.tbl_data_timeseries
+        WHERE ship_id = %s
+        """
+        latest_params = [ship_id]
+        
+        if cutoff_time:
+            latest_query += " AND created_time < %s"
+            latest_params.append(cutoff_time)
+        
+        latest_query += " ORDER BY created_time DESC LIMIT 1"
+        
+        try:
+            # Execute queries
+            earliest_result = db_manager.execute_query(earliest_query, tuple(earliest_params))
+            latest_result = db_manager.execute_query(latest_query, tuple(latest_params))
+            
+            end_query_time = time_module.time()
+            query_duration = end_query_time - start_query_time
+            
+            if not earliest_result or not latest_result:
+                logger.warning(f"⚠️ No data found for {ship_id} (query took {query_duration:.2f}s)")
+                return None
+            
+            earliest_time = earliest_result[0]['created_time']
+            latest_time = latest_result[0]['created_time']
+            
+            logger.success(f"✅ Data range found for {ship_id}: {earliest_time} to {latest_time} (query took {query_duration:.2f}s)")
+            
+            return (earliest_time, latest_time)
+            
+        except Exception as e:
+            end_query_time = time_module.time()
+            query_duration = end_query_time - start_query_time
+            logger.error(f"❌ Error finding data range for {ship_id} after {query_duration:.2f}s: {e}")
+            raise
     
     def migrate_chunk(
         self, 
