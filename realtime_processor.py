@@ -537,6 +537,22 @@ class RealTimeProcessor:
         
         thread_logger.info(f"🔍 Processing batch: {len(batch_data)} records (Multi-Table mode)")
         
+        # Debug: Check how many channels are in channel_list
+        unique_channels = set(row['data_channel_id'] for row in batch_data)
+        all_allowed_channels = self.channel_router.get_all_channels()
+        matched_channels = unique_channels & all_allowed_channels
+        unmatched_channels = unique_channels - all_allowed_channels
+        
+        thread_logger.info(f"   📊 Channel analysis:")
+        thread_logger.info(f"      Total unique channels in data: {len(unique_channels)}")
+        thread_logger.info(f"      Channels in channel_list: {len(matched_channels)} ✅")
+        thread_logger.info(f"      Channels NOT in channel_list: {len(unmatched_channels)} ❌")
+        
+        if len(unmatched_channels) > 0:
+            thread_logger.warning(f"   ⚠️ {len(unmatched_channels)} channels will be filtered out!")
+            sample_unmatched = list(unmatched_channels)[:5]
+            thread_logger.warning(f"      Sample unmatched: {sample_unmatched}")
+        
         # Debug: Show sample raw data
         if len(batch_data) > 0:
             sample_raw = batch_data[0]
