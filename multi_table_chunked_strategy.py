@@ -70,11 +70,12 @@ class MultiTableChunkedStrategy:
         # Optimize: Use separate queries with LIMIT 1 instead of MIN/MAX aggregation
         # This is much faster on large tables with indexes
         
-        # Get earliest time
+        # Get earliest time - use index on created_time
         min_query = """
         SELECT created_time
         FROM tenant.tbl_data_timeseries
-        WHERE ship_id = %s
+        WHERE created_time IS NOT NULL
+        AND ship_id = %s
         """
         
         if cutoff_time:
@@ -85,11 +86,12 @@ class MultiTableChunkedStrategy:
         
         min_query += " ORDER BY created_time ASC LIMIT 1"
         
-        # Get latest time
+        # Get latest time - use index on created_time
         max_query = """
         SELECT created_time
         FROM tenant.tbl_data_timeseries
-        WHERE ship_id = %s
+        WHERE created_time IS NOT NULL
+        AND ship_id = %s
         """
         
         if cutoff_time:
@@ -101,9 +103,19 @@ class MultiTableChunkedStrategy:
         max_query += " ORDER BY created_time DESC LIMIT 1"
         
         try:
-            # Execute queries
+            # Execute MIN query
+            logger.debug(f"   Executing MIN query for {ship_id}...")
+            min_start = time_module.time()
             min_result = db_manager.execute_query(min_query, min_params)
+            min_duration = time_module.time() - min_start
+            logger.debug(f"   MIN query completed in {min_duration:.2f}s")
+            
+            # Execute MAX query
+            logger.debug(f"   Executing MAX query for {ship_id}...")
+            max_start = time_module.time()
             max_result = db_manager.execute_query(max_query, max_params)
+            max_duration = time_module.time() - max_start
+            logger.debug(f"   MAX query completed in {max_duration:.2f}s")
             
             end_query_time = time_module.time()
             query_duration = end_query_time - start_query_time
@@ -115,12 +127,18 @@ class MultiTableChunkedStrategy:
             min_time = min_result[0]['created_time']
             max_time = max_result[0]['created_time']
             
-            logger.success(f"✅ Data range found for {ship_id}: {min_time} to {max_time} (query took {query_duration:.2f}s)")
+            logger.success(f"✅ Data range found for {ship_id}: {min_time} to {max_time} (total: {query_duration:.2f}s, min: {min_duration:.2f}s, max: {max_duration:.2f}s)")
+            
+            # Warn if query was slow
+            if query_duration > 10:
+                logger.warning(f"⚠️ Slow time range query for {ship_id}: {query_duration:.2f}s - consider adding indexes")
             
             return (min_time, max_time)
             
         except Exception as e:
-            logger.error(f"❌ Error getting data time range for {ship_id}: {e}")
+            end_query_time = time_module.time()
+            query_duration = end_query_time - start_query_time
+            logger.error(f"❌ Error getting data time range for {ship_id} after {query_duration:.2f}s: {e}")
             raise
     
     def migrate_chunk(
