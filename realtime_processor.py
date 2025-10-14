@@ -530,6 +530,11 @@ class RealTimeProcessor:
         
         thread_logger.info(f"🔍 Processing batch: {len(batch_data)} records (Multi-Table mode)")
         
+        # Debug: Show sample raw data
+        if len(batch_data) > 0:
+            sample_raw = batch_data[0]
+            thread_logger.info(f"   🔍 Sample raw data: {sample_raw}")
+        
         # Group data by timestamp
         grouped_data = self._group_data_by_timestamp(batch_data)
         thread_logger.info(f"   📊 Grouped into {len(grouped_data)} timestamps")
@@ -540,6 +545,8 @@ class RealTimeProcessor:
             self.channel_router.TABLE_ENGINE: [],
             self.channel_router.TABLE_NAVIGATION: []
         }
+        
+        thread_logger.info(f"   🔍 Table types in use: {self.channel_router.get_all_table_types()}")
         
         for timestamp, channels in grouped_data.items():
             # Skip if already processed
