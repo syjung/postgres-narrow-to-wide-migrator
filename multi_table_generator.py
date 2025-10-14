@@ -194,36 +194,22 @@ class MultiTableGenerator:
     
     def _channel_to_column_name(self, channel: str) -> str:
         """
-        채널 ID를 컬럼명으로 변환
+        채널 ID를 컬럼명으로 변환 (변환 없이 그대로 사용)
         
         Args:
             channel: 채널 ID (예: /hs4sd_v1/ab/fuel/oil///use)
             
         Returns:
-            컬럼명 (예: hs4sd_v1_ab_fuel_oil_use)
+            컬럼명 (예: /hs4sd_v1/ab/fuel/oil///use) - 그대로 사용!
         """
-        # Remove leading / if exists
-        if channel.startswith('/'):
-            channel = channel[1:]
-        
-        # / 를 _ 로 변경
-        col_name = channel.replace('/', '_')
-        
-        # 연속된 _ 제거
-        while '__' in col_name:
-            col_name = col_name.replace('__', '_')
-        
-        # 앞뒤 _ 제거
-        col_name = col_name.strip('_')
-        
-        return col_name
+        # 채널 ID를 그대로 컬럼명으로 사용 (변환 없음)
+        return channel
     
     def _needs_quoting(self, col_name: str) -> bool:
-        """컬럼명에 따옴표가 필요한지 확인"""
-        special_chars = ['-', ' ', '.', '(', ')', '[', ']', '{', '}', '@', '#', '$', 
-                        '%', '^', '&', '*', '+', '=', '|', '\\', ':', ';', '"', "'", 
-                        '<', '>', ',', '?', '!', '~', '`']
-        return any(char in col_name for char in special_chars)
+        """컬럼명에 따옴표가 필요한지 확인 (채널 ID를 그대로 사용하므로 항상 필요)"""
+        # 채널 ID를 그대로 컬럼명으로 사용하므로 항상 큰따옴표 필요
+        # (/, 등 특수문자 포함)
+        return True
     
     def create_indexes(self, ship_id: str):
         """

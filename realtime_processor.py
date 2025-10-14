@@ -714,22 +714,9 @@ class RealTimeProcessor:
         return row_data if processed_channels > 0 else None
     
     def _channel_to_column_name(self, channel: str) -> str:
-        """Convert channel ID to column name"""
-        # Remove leading /
-        if channel.startswith('/'):
-            channel = channel[1:]
-        
-        # Replace / with _
-        col_name = channel.replace('/', '_')
-        
-        # Remove consecutive _
-        while '__' in col_name:
-            col_name = col_name.replace('__', '_')
-        
-        # Remove leading/trailing _
-        col_name = col_name.strip('_')
-        
-        return col_name
+        """Convert channel ID to column name (use as-is, no transformation)"""
+        # 채널 ID를 그대로 컬럼명으로 사용 (변환 없음)
+        return channel
     
     def _get_table_columns(self, table_name: str) -> Set[str]:
         """Get table columns with thread-safe caching"""
