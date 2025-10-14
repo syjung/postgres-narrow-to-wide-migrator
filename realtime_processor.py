@@ -591,7 +591,26 @@ class RealTimeProcessor:
             # Skip if already processed (within last 2 minutes)
             if timestamp in self.processed_timestamps:
                 thread_logger.warning(f"   ⏭️ Skipping already processed timestamp: {timestamp} ({len(channels)} channels)")
-                continue
+                
+                # ✅ Verify it actually exists in DB (safety check)
+                if self.use_multi_table:
+                    sample_table = f"tbl_data_timeseries_{ship_id.lower()}_1"
+                    check_query = f"SELECT COUNT(*) as cnt FROM tenant.{sample_table} WHERE created_time = %s"
+                    check_result = db_manager.execute_query(check_query, (timestamp,))
+                    if check_result and check_result[0]['cnt'] > 0:
+                        thread_logger.info(f"      ✅ Verified: Row exists in DB (safe to skip)")
+                    else:
+                        thread_logger.error(f"      ❌ ERROR: Row NOT in DB but in processed_timestamps!")
+                        thread_logger.error(f"      This is a bug - processing anyway...")
+                        self.processed_timestamps.remove(timestamp)  # Remove and reprocess
+                        # Continue to process below (don't skip)
+                else:
+                    thread_logger.info(f"      Skipped based on processed_timestamps cache")
+                    continue
+                
+                # If we didn't continue above (DB check failed), process normally
+                if timestamp in self.processed_timestamps:
+                    continue
             
             thread_logger.info(f"   🔄 Processing timestamp {timestamp}: {len(channels)} channels")
             
@@ -651,8 +670,6 @@ class RealTimeProcessor:
                     thread_logger.debug(f"      ✅ Added row to {table_type} with {row_cols} data columns")
                 else:
                     thread_logger.warning(f"      ⚠️ _prepare_wide_row_multi_table returned None for {table_type} ({len(filtered_channels)} channels)")
-            
-            self.processed_timestamps.add(timestamp)
         
         # Summary before insertion
         thread_logger.info(f"   📊 Prepared data:")
@@ -660,14 +677,33 @@ class RealTimeProcessor:
             count = len(table_data[table_type])
             thread_logger.info(f"      - {table_type}: {count} rows")
         
+        # Track successfully inserted timestamps
+        successfully_inserted = False
+        
         # Insert data into each table
-        for table_type in self.channel_router.get_all_table_types():
-            if table_data[table_type]:
-                table_name = f"tbl_data_timeseries_{ship_id.lower()}_{table_type}"
-                thread_logger.info(f"💾 Inserting {len(table_data[table_type])} rows into {table_name}")
-                self._insert_batch_data(table_data[table_type], table_name, thread_logger)
-            else:
-                thread_logger.debug(f"   ⏭️ No data to insert into {table_type}")
+        try:
+            for table_type in self.channel_router.get_all_table_types():
+                if table_data[table_type]:
+                    table_name = f"tbl_data_timeseries_{ship_id.lower()}_{table_type}"
+                    thread_logger.info(f"💾 Inserting {len(table_data[table_type])} rows into {table_name}")
+                    self._insert_batch_data(table_data[table_type], table_name, thread_logger)
+                else:
+                    thread_logger.debug(f"   ⏭️ No data to insert into {table_type}")
+            
+            # ✅ All inserts successful - mark timestamps as processed
+            successfully_inserted = True
+            
+        except Exception as e:
+            thread_logger.error(f"❌ INSERT failed: {e}")
+            thread_logger.error(f"   Timestamps will NOT be marked as processed (will retry next time)")
+            raise
+        
+        finally:
+            # Only add to processed_timestamps if ALL inserts succeeded
+            if successfully_inserted:
+                for timestamp in grouped_data.keys():
+                    self.processed_timestamps.add(timestamp)
+                thread_logger.info(f"   ✅ Marked {len(grouped_data)} timestamps as processed (cache size: {len(self.processed_timestamps)})")
     
     def _process_batch(self, batch_data: List[Dict[str, Any]], table_name: str, thread_logger=None):
         """Process a batch of data (Legacy Single-Table mode)"""

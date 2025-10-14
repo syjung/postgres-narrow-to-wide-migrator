@@ -293,11 +293,10 @@ class ParallelBatchMigrator:
                         
                         thread_logger.success(f"✅ Chunk {i}/{total_chunks} completed in {chunk_duration:.2f}s")
                         
-                        # ✅ Update ship cutoff time after each successful chunk
-                        # This allows Realtime to start from the latest processed point
+                        # ✅ Update BATCH cutoff time after each successful chunk
                         from cutoff_time_manager import cutoff_time_manager
-                        cutoff_time_manager.save_ship_cutoff_time(ship_id, end_time)
-                        thread_logger.debug(f"💾 Updated cutoff time for {ship_id}: {end_time}")
+                        cutoff_time_manager.save_batch_cutoff_time(ship_id, end_time)
+                        thread_logger.debug(f"💾 Updated batch cutoff time for {ship_id}: {end_time}")
                         
                         # Calculate ETA
                         elapsed_time = time.time() - start_migration_time
@@ -315,11 +314,10 @@ class ParallelBatchMigrator:
                     else:
                         thread_logger.info(f"⏭️ Chunk {i}/{total_chunks} skipped in {chunk_duration:.2f}s: {chunk_result.get('message', 'No data')}")
                         
-                        # ✅ Update cutoff time even for skipped chunks
-                        # So Realtime doesn't re-process empty time ranges
+                        # ✅ Update BATCH cutoff time even for skipped chunks
                         from cutoff_time_manager import cutoff_time_manager
-                        cutoff_time_manager.save_ship_cutoff_time(ship_id, end_time)
-                        thread_logger.debug(f"💾 Updated cutoff time for skipped chunk: {end_time}")
+                        cutoff_time_manager.save_batch_cutoff_time(ship_id, end_time)
+                        thread_logger.debug(f"💾 Updated batch cutoff time for skipped chunk: {end_time}")
                         
                 except Exception as e:
                     chunk_duration = time.time() - chunk_start_time
