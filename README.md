@@ -2,6 +2,20 @@
 
 PostgreSQL의 대용량 narrow type 테이블을 wide type 테이블로 마이그레이션하는 프로젝트입니다.
 
+## 🆕 Multi-Table Mode (권장)
+
+선박당 **3개의 시스템별 테이블**로 데이터를 분산 저장하여 성능과 관리 효율성을 향상시켰습니다.
+
+👉 **[Multi-Table Migration Guide](MULTI_TABLE_GUIDE.md)** - 상세 가이드 참조
+
+**빠른 시작:**
+```bash
+# Multi-Table 모드로 병렬 배치 마이그레이션
+./start_parallel_batch.sh
+```
+
+---
+
 ## 프로젝트 개요
 
 이 프로젝트는 `tenant.tbl_data_timeseries` 테이블의 데이터를 ship_id별로 분리된 wide type 테이블로 변환합니다.

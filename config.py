@@ -47,6 +47,19 @@ class MigrationConfig(BaseSettings):
     # AZURE서버
     target_ship_ids: List[str] = ["IMO9976903", "IMO9976915","IMO9976927","IMO9976939","IMO9986051","IMO9986063","IMO9986087","IMO9986104"]
     
+    # Multi-Table configuration
+    use_multi_table: bool = True  # Enable multi-table mode
+    channel_files: ClassVar[dict] = {
+        'auxiliary': 'column_list_auxiliary_systems.txt',
+        'engine': 'column_list_engine_generator.txt',
+        'navigation': 'column_list_navigation_ship.txt'
+    }
+    table_name_patterns: ClassVar[dict] = {
+        'auxiliary': 'auxiliary_systems_{ship_id}',
+        'engine': 'engine_generator_{ship_id}',
+        'navigation': 'navigation_ship_{ship_id}'
+    }
+    
     # Performance optimization settings
     max_parallel_workers: int = 16  # Maximum thread limit for scalability
     parallel_workers: int = 8  # Default thread count (will be calculated dynamically)
@@ -86,11 +99,21 @@ class MigrationConfig(BaseSettings):
                 'cursor_factory': None
             }
         
-        return {
-            'minconn': thread_count,  # 1:1 with thread count
-            'maxconn': thread_count * 2,  # 2x for burst capacity
-            'cursor_factory': None
-        }
+        # Multi-table mode: 각 thread가 3개 테이블에 INSERT하므로 여유 필요
+        if self.use_multi_table:
+            # 3개 테이블 동시 처리를 위한 여유
+            multiplier = 3
+            return {
+                'minconn': thread_count,  # 1:1 with thread count
+                'maxconn': thread_count * multiplier,  # 3x for multi-table operations
+                'cursor_factory': None
+            }
+        else:
+            return {
+                'minconn': thread_count,  # 1:1 with thread count
+                'maxconn': thread_count * 2,  # 2x for burst capacity
+                'cursor_factory': None
+            }
     
     def get_optimal_postgresql_settings(self) -> dict:
         """Calculate optimal PostgreSQL settings based on thread count"""
@@ -129,7 +152,7 @@ class MigrationConfig(BaseSettings):
     cutoff_time_file: str = "migration_cutoff_time.txt"
     
     # Chunked migration settings
-    chunk_size_hours: int = 6  # Default chunk size (can be reduced for high-volume periods)
+    chunk_size_hours: int = 2  # Default chunk size (can be reduced for high-volume periods)
     max_records_per_chunk: int = 1000000  # Threshold for chunk size reduction
     adaptive_chunking: bool = True  # Enable dynamic chunk size adjustment
     
@@ -151,7 +174,7 @@ class LoggingConfig(BaseSettings):
     level: str = "INFO"
     log_file: str = "logs/migration.log"
     rotation: str = "1 day"  # Daily rotation
-    retention: str = "30 days"  # Keep logs for 30 days
+    retention: str = "5 days"  # Keep logs for 30 days
 
 
 # Global configuration instances

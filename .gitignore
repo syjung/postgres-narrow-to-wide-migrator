@@ -128,6 +128,10 @@ migration_cutoff_time.txt
 failed_chunks_after_reprocess.csv
 post_proc.csv
 
+# Multi-Table specific
+column_list_long_with_groups.txt
+column_list_2562_org.txt
+
 # IDE
 .vscode/
 .idea/

@@ -1,6 +1,6 @@
 """
-Parallel Batch Migrator - 선박별 스레드 기반 배치 처리
-실시간 처리에서 발견된 오류들을 반영한 안전한 배치 처리
+Parallel Batch Migrator - 선박별 스레드 기반 배치 처리 (Multi-Table 지원)
+3개 테이블(auxiliary, engine, navigation)로 데이터 분산 저장
 """
 import threading
 import time
@@ -9,11 +9,20 @@ from typing import Dict, List, Any, Optional, Set
 from datetime import datetime, timedelta
 from loguru import logger
 from database import db_manager
-from table_generator import table_generator
-from schema_analyzer import schema_analyzer
 from config import migration_config
-from chunked_migration_strategy import chunked_migration_strategy
 from thread_logger import get_ship_thread_logger
+
+# Multi-table modules
+from channel_router import channel_router
+from multi_table_generator import multi_table_generator
+from multi_table_chunked_strategy import multi_table_chunked_strategy
+
+# Legacy module for backward compatibility
+try:
+    from chunked_migration_strategy import chunked_migration_strategy
+    LEGACY_MODE_AVAILABLE = True
+except:
+    LEGACY_MODE_AVAILABLE = False
 
 
 class ParallelBatchMigrator:
@@ -22,9 +31,19 @@ class ParallelBatchMigrator:
     def __init__(self):
         self.batch_size = migration_config.batch_size
         self.value_format_mapping = migration_config.VALUE_FORMAT_MAPPING
+        self.use_multi_table = migration_config.use_multi_table
         
-        # Load allowed columns from column_list.txt
-        self.allowed_columns = self._load_allowed_columns()
+        # Multi-table or legacy mode
+        if self.use_multi_table:
+            logger.info("🎯 Multi-Table Mode Enabled")
+            self.channel_router = channel_router
+            self.table_generator = multi_table_generator
+            self.migration_strategy = multi_table_chunked_strategy
+        else:
+            logger.info("⚠️ Legacy Single-Table Mode (will be deprecated)")
+            if not LEGACY_MODE_AVAILABLE:
+                raise RuntimeError("Legacy mode not available but use_multi_table=False")
+            self.migration_strategy = chunked_migration_strategy
         
         # Cache for table columns to avoid repeated queries
         self.table_columns_cache: Dict[str, Set[str]] = {}
@@ -34,11 +53,18 @@ class ParallelBatchMigrator:
         self.max_workers = migration_config.get_optimal_thread_count()
         self.thread_pool = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="batch")
         
-        logger.info(f"🚀 Initialized dynamic parallel batch migrator:")
+        logger.info(f"🚀 Initialized parallel batch migrator:")
+        logger.info(f"   📊 Mode: {'Multi-Table (3 tables/ship)' if self.use_multi_table else 'Single-Table (legacy)'}")
         logger.info(f"   📊 Ships: {ship_count}")
         logger.info(f"   📊 Threads: {self.max_workers}")
         logger.info(f"   📊 Ratio: {ship_count/self.max_workers:.2f} ships per thread")
-        logger.info(f"   📊 Max limit: {migration_config.max_parallel_workers}")
+        logger.info(f"   📊 DB Pool: min={migration_config.get_optimal_pool_config()['minconn']}, max={migration_config.get_optimal_pool_config()['maxconn']}")
+        
+        if self.use_multi_table:
+            stats = channel_router.get_channel_count_by_table()
+            logger.info(f"   📊 Channel distribution:")
+            for table_type, count in stats.items():
+                logger.info(f"      - {table_type}: {count} channels")
         
         # Thread-safe locks for shared resources
         self.cache_lock = threading.Lock()
@@ -49,19 +75,6 @@ class ParallelBatchMigrator:
         self.failed_ships: Set[str] = set()
         self.total_records_processed = 0
     
-    def _load_allowed_columns(self) -> Set[str]:
-        """Load allowed columns from column_list.txt"""
-        try:
-            with open('column_list.txt', 'r', encoding='utf-8') as f:
-                columns = {line.strip() for line in f if line.strip()}
-            logger.info(f"✅ Loaded {len(columns)} allowed columns from column_list.txt")
-            return columns
-        except FileNotFoundError:
-            logger.warning("⚠️ column_list.txt not found, using empty allowed columns set")
-            return set()
-        except Exception as e:
-            logger.error(f"❌ Failed to load column_list.txt: {e}")
-            return set()
     
     def migrate_all_ships_parallel(self, cutoff_time: Optional[datetime] = None) -> Dict[str, Any]:
         """
@@ -216,35 +229,54 @@ class ParallelBatchMigrator:
             }
     
     def _migrate_ship_data(self, ship_id: str, cutoff_time: Optional[datetime] = None, thread_logger=None) -> Dict[str, Any]:
-        """Migrate data for a specific ship using chunked strategy"""
+        """Migrate data for a specific ship using chunked strategy (Multi-Table support)"""
         if thread_logger is None:
             thread_logger = get_ship_thread_logger(ship_id)
         
-        thread_logger.info(f"🚀 Starting chunked migration for ship: {ship_id}")
+        mode = "Multi-Table" if self.use_multi_table else "Single-Table"
+        thread_logger.info(f"🚀 Starting chunked migration for ship: {ship_id} ({mode} mode)")
         
         try:
-            # Ensure table exists and is properly created
-            table_name = f'tbl_data_timeseries_{ship_id.upper()}'  # Force uppercase for consistency
-            thread_logger.info(f"📋 Target table: {table_name}")
-            
-            if not db_manager.check_table_exists(table_name):
-                thread_logger.info(f"📋 Creating table: {table_name}")
-                self._create_table_for_ship(ship_id, thread_logger)
+            # Ensure tables exist
+            if self.use_multi_table:
+                # Create 3 tables for this ship
+                thread_logger.info(f"📋 Creating 3 tables for ship: {ship_id}")
+                if not multi_table_generator.ensure_all_tables_exist(ship_id):
+                    raise RuntimeError(f"Failed to create tables for {ship_id}")
+                
+                thread_logger.success(f"✅ All 3 tables ready for {ship_id}")
             else:
-                thread_logger.info(f"📋 Table already exists: {table_name}")
+                # Legacy single table
+                table_name = f'tbl_data_timeseries_{ship_id.upper()}'
+                thread_logger.info(f"📋 Target table: {table_name}")
+                
+                if not db_manager.check_table_exists(table_name):
+                    thread_logger.info(f"📋 Creating table: {table_name}")
+                    self._create_table_for_ship_legacy(ship_id, thread_logger)
+                else:
+                    thread_logger.info(f"📋 Table already exists: {table_name}")
             
-            # Use chunked migration strategy
+            # Use appropriate migration strategy
             total_records = 0
             
             # Get data chunks
-            chunks = list(chunked_migration_strategy.get_data_chunks(ship_id, cutoff_time))
+            chunks = list(self.migration_strategy.get_data_chunks(ship_id, cutoff_time))
             thread_logger.info(f"📊 Found {len(chunks)} chunks to process")
             
             for i, (start_time, end_time) in enumerate(chunks):
                 thread_logger.info(f"🔄 Processing chunk {i+1}/{len(chunks)}: {start_time} to {end_time}")
                 
                 try:
-                    chunk_result = chunked_migration_strategy.migrate_chunk(ship_id, start_time, end_time, table_name, thread_logger)
+                    if self.use_multi_table:
+                        # Multi-table migration
+                        chunk_result = self.migration_strategy.migrate_chunk(
+                            ship_id, start_time, end_time, thread_logger
+                        )
+                    else:
+                        # Legacy single-table migration
+                        chunk_result = self.migration_strategy.migrate_chunk(
+                            ship_id, start_time, end_time, table_name, thread_logger
+                        )
                     
                     if chunk_result['status'] == 'completed':
                         records_processed = chunk_result.get('records_processed', 0)
@@ -260,13 +292,24 @@ class ParallelBatchMigrator:
             
             thread_logger.success(f"Ship migration completed: {total_records} total records")
             
-            return {
+            result = {
                 'success': True,
                 'ship_id': ship_id,
                 'records_processed': total_records,
-                'table_name': table_name,
-                'chunks_processed': len(chunks)
+                'chunks_processed': len(chunks),
+                'mode': mode
             }
+            
+            if self.use_multi_table:
+                result['tables'] = [
+                    f"auxiliary_systems_{ship_id.lower()}",
+                    f"engine_generator_{ship_id.lower()}",
+                    f"navigation_ship_{ship_id.lower()}"
+                ]
+            else:
+                result['table_name'] = f'tbl_data_timeseries_{ship_id.upper()}'
+            
+            return result
             
         except Exception as e:
             thread_logger.error(f"Ship migration failed: {e}")
@@ -277,13 +320,16 @@ class ParallelBatchMigrator:
                 'records_processed': 0
             }
     
-    def _create_table_for_ship(self, ship_id: str, thread_logger=None):
-        """Create table for ship if it doesn't exist (thread-safe)"""
+    def _create_table_for_ship_legacy(self, ship_id: str, thread_logger=None):
+        """Create legacy single table for ship (backward compatibility)"""
         if thread_logger is None:
             thread_logger = get_ship_thread_logger(ship_id)
         
         try:
-            thread_logger.info(f"📋 Creating table for ship: {ship_id}")
+            from table_generator import table_generator
+            from schema_analyzer import schema_analyzer
+            
+            thread_logger.info(f"📋 Creating legacy table for ship: {ship_id}")
             
             # Analyze schema for this ship
             schema = schema_analyzer.analyze_ship_data(ship_id, sample_minutes=60)

@@ -1,5 +1,10 @@
 """
 Ultra-fast migrator using COPY + single query approach
+
+⚠️ DEPRECATED: This module is deprecated and will be removed in future versions.
+Please use parallel_batch_migrator.py with multi_table_chunked_strategy.py instead.
+
+This file is kept for backward compatibility only.
 """
 import csv
 import io

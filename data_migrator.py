@@ -1,5 +1,10 @@
 """
 Data migration module for PostgreSQL Narrow-to-Wide Table Migration
+
+⚠️ DEPRECATED: This module is deprecated and will be removed in future versions.
+Please use parallel_batch_migrator.py instead.
+
+This file is kept for backward compatibility only.
 """
 import asyncio
 from typing import Dict, List, Any, Optional, Callable

@@ -1,5 +1,5 @@
 """
-Real-time data processing module
+Real-time data processing module (Multi-Table support)
 """
 import asyncio
 import schedule
@@ -10,15 +10,25 @@ from typing import Dict, List, Any, Optional, Set
 from datetime import datetime, timedelta
 from loguru import logger
 from database import db_manager
-from table_generator import table_generator
-from schema_analyzer import schema_analyzer
 from config import migration_config
 from cutoff_time_manager import cutoff_time_manager
 from thread_logger import get_ship_thread_logger
 
+# Multi-table support
+from channel_router import channel_router
+from multi_table_generator import multi_table_generator
+
+# Legacy support
+try:
+    from table_generator import table_generator
+    from schema_analyzer import schema_analyzer
+    LEGACY_MODE_AVAILABLE = True
+except:
+    LEGACY_MODE_AVAILABLE = False
+
 
 class RealTimeProcessor:
-    """Handles real-time data processing for wide tables"""
+    """Handles real-time data processing for wide tables (Multi-Table support)"""
     
     def __init__(self):
         self.batch_size = migration_config.batch_size
@@ -27,9 +37,19 @@ class RealTimeProcessor:
         self.running = False
         self.cutoff_time: Optional[datetime] = None  # 마이그레이션 완료 시점
         self.dual_write_mode = migration_config.dual_write_mode
+        self.use_multi_table = migration_config.use_multi_table
         
-        # Load allowed columns from column_list.txt
-        self.allowed_columns = self._load_allowed_columns()
+        # Multi-table or legacy mode
+        if self.use_multi_table:
+            logger.info("🎯 Real-time: Multi-Table Mode Enabled")
+            self.channel_router = channel_router
+            self.table_generator = multi_table_generator
+            # Multi-table mode doesn't use allowed_columns file
+            self.allowed_columns = None
+        else:
+            logger.info("⚠️ Real-time: Legacy Single-Table Mode")
+            # Load allowed columns from column_list.txt
+            self.allowed_columns = self._load_allowed_columns()
         
         # Cache for table columns to avoid repeated queries
         self.table_columns_cache: Dict[str, Set[str]] = {}
@@ -39,11 +59,20 @@ class RealTimeProcessor:
         self.max_workers = migration_config.get_optimal_thread_count()
         self.thread_pool = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="realtime")
         
-        logger.info(f"🚀 Initialized dynamic real-time processor:")
+        logger.info(f"🚀 Initialized real-time processor:")
+        logger.info(f"   📊 Mode: {'Multi-Table (3 tables/ship)' if self.use_multi_table else 'Single-Table (legacy)'}")
         logger.info(f"   📊 Ships: {ship_count}")
         logger.info(f"   📊 Threads: {self.max_workers}")
         logger.info(f"   📊 Ratio: {ship_count/self.max_workers:.2f} ships per thread")
-        logger.info(f"   📊 Max limit: {migration_config.max_parallel_workers}")
+        logger.info(f"   📊 DB Pool: min={migration_config.get_optimal_pool_config()['minconn']}, max={migration_config.get_optimal_pool_config()['maxconn']}")
+        
+        if self.use_multi_table:
+            stats = channel_router.get_channel_count_by_table()
+            logger.info(f"   📊 Channel distribution:")
+            for table_type, count in stats.items():
+                logger.info(f"      - {table_type}: {count} channels")
+        else:
+            logger.info(f"   📊 Allowed columns: {len(self.allowed_columns) if self.allowed_columns else 0}")
         
         # Thread-safe locks for shared resources
         self.cache_lock = threading.Lock()
@@ -251,19 +280,25 @@ class RealTimeProcessor:
             }
     
     def _process_ship_data(self, ship_id: str, thread_logger=None):
-        """Process new data for a specific ship"""
+        """Process new data for a specific ship (Multi-Table support)"""
         if thread_logger is None:
             thread_logger = get_ship_thread_logger(ship_id)
-            
-        table_name = f'tbl_data_timeseries_{ship_id.upper()}'  # Force uppercase for consistency
         
-        # STEP 1: Ensure table exists (regardless of data availability)
-        if not db_manager.check_table_exists(table_name):
-            thread_logger.info(f"Table {table_name} does not exist, creating it")
-            self._create_table_for_ship(ship_id, thread_logger)
-            thread_logger.success(f"Table {table_name} created successfully")
+        # STEP 1: Ensure tables exist
+        if self.use_multi_table:
+            # Multi-Table mode: 3 tables
+            thread_logger.debug(f"Ensuring 3 tables exist for {ship_id}")
+            self._ensure_multi_tables_exist(ship_id, thread_logger)
         else:
-            thread_logger.debug(f"Table {table_name} already exists")
+            # Legacy mode: 1 table
+            table_name = f'tbl_data_timeseries_{ship_id.upper()}'
+            
+            if not db_manager.check_table_exists(table_name):
+                thread_logger.info(f"Table {table_name} does not exist, creating it")
+                self._create_table_for_ship_legacy(ship_id, thread_logger)
+                thread_logger.success(f"Table {table_name} created successfully")
+            else:
+                thread_logger.debug(f"Table {table_name} already exists")
         
         # STEP 2: Process data (only if data exists)
         # Get the last processed time for this ship
@@ -292,7 +327,13 @@ class RealTimeProcessor:
         
         # Process data in batches
         for batch in self._chunk_data(new_data, self.batch_size):
-            self._process_batch(batch, table_name, thread_logger)
+            if self.use_multi_table:
+                # Multi-Table mode: process to 3 tables
+                self._process_batch_multi_table(batch, ship_id, thread_logger)
+            else:
+                # Legacy mode: single table
+                table_name = f'tbl_data_timeseries_{ship_id.upper()}'
+                self._process_batch(batch, table_name, thread_logger)
         
         # Update last processed time to the latest record's timestamp
         if new_data:
@@ -301,7 +342,7 @@ class RealTimeProcessor:
             thread_logger.info(f"✅ Updated last processed time for {ship_id}: {latest_timestamp}")
     
     def _get_last_processed_time(self, ship_id: str) -> Optional[datetime]:
-        """Get the last processed timestamp for a ship"""
+        """Get the last processed timestamp for a ship (Multi-Table support)"""
         # Check if we have a ship-specific cutoff time file
         ship_cutoff_time = cutoff_time_manager.load_ship_cutoff_time(ship_id)
         if ship_cutoff_time:
@@ -314,18 +355,47 @@ class RealTimeProcessor:
             logger.debug(f"Using global cutoff time for {ship_id}: {global_cutoff_time}")
             return global_cutoff_time
         
-        # Try to get the latest timestamp from the target table
-        table_name = f'tbl_data_timeseries_{ship_id}'
+        # Try to get the latest timestamp from tables
         try:
-            query = f"""
-            SELECT MAX(created_time) as latest_time
-            FROM tenant.{table_name}
-            """
-            result = db_manager.execute_query(query)
-            if result and result[0]['latest_time']:
-                latest_time = result[0]['latest_time']
-                logger.debug(f"Using latest timestamp from table for {ship_id}: {latest_time}")
-                return latest_time
+            if self.use_multi_table:
+                # Multi-Table: Check all 3 tables and get the latest
+                table_names = [
+                    f'auxiliary_systems_{ship_id.lower()}',
+                    f'engine_generator_{ship_id.lower()}',
+                    f'navigation_ship_{ship_id.lower()}'
+                ]
+                
+                latest_time = None
+                for table_name in table_names:
+                    if not db_manager.check_table_exists(table_name):
+                        continue
+                        
+                    query = f"""
+                    SELECT MAX(created_time) as latest_time
+                    FROM tenant.{table_name}
+                    """
+                    result = db_manager.execute_query(query)
+                    if result and result[0]['latest_time']:
+                        table_time = result[0]['latest_time']
+                        if latest_time is None or table_time > latest_time:
+                            latest_time = table_time
+                
+                if latest_time:
+                    logger.debug(f"Using latest timestamp from tables for {ship_id}: {latest_time}")
+                    return latest_time
+            else:
+                # Legacy: Single table
+                table_name = f'tbl_data_timeseries_{ship_id}'
+                query = f"""
+                SELECT MAX(created_time) as latest_time
+                FROM tenant.{table_name}
+                """
+                result = db_manager.execute_query(query)
+                if result and result[0]['latest_time']:
+                    latest_time = result[0]['latest_time']
+                    logger.debug(f"Using latest timestamp from table for {ship_id}: {latest_time}")
+                    return latest_time
+                    
         except Exception as e:
             logger.debug(f"Could not get last processed time for {ship_id}: {e}")
         
@@ -447,8 +517,63 @@ class RealTimeProcessor:
                 thread_logger.error(f"Fallback query also failed: {fallback_error}")
                 raise
     
+    def _process_batch_multi_table(self, batch_data: List[Dict[str, Any]], ship_id: str, thread_logger=None):
+        """Process a batch of data to 3 tables (Multi-Table mode)"""
+        if not batch_data:
+            return
+            
+        if thread_logger is None:
+            thread_logger = get_ship_thread_logger(ship_id)
+        
+        thread_logger.debug(f"🔍 Processing batch with {len(batch_data)} records (Multi-Table)")
+        
+        # Group data by timestamp
+        grouped_data = self._group_data_by_timestamp(batch_data)
+        
+        # Prepare data for each table type
+        table_data = {
+            self.channel_router.TABLE_AUXILIARY: [],
+            self.channel_router.TABLE_ENGINE: [],
+            self.channel_router.TABLE_NAVIGATION: []
+        }
+        
+        for timestamp, channels in grouped_data.items():
+            # Skip if already processed
+            if timestamp in self.processed_timestamps:
+                continue
+            
+            # Prepare row for each table type
+            for table_type in self.channel_router.get_all_table_types():
+                table_name = f"{table_type}_{ship_id.lower()}"
+                
+                # Filter channels for this table
+                filtered_channels = [
+                    ch for ch in channels 
+                    if self.channel_router.get_table_type(ch['data_channel_id']) == table_type
+                ]
+                
+                if not filtered_channels:
+                    continue
+                
+                # Prepare wide row
+                row_data = self._prepare_wide_row_multi_table(
+                    timestamp, filtered_channels, table_type, thread_logger
+                )
+                
+                if row_data:
+                    table_data[table_type].append(row_data)
+            
+            self.processed_timestamps.add(timestamp)
+        
+        # Insert data into each table
+        for table_type in self.channel_router.get_all_table_types():
+            if table_data[table_type]:
+                table_name = f"{table_type}_{ship_id.lower()}"
+                thread_logger.debug(f"💾 Inserting {len(table_data[table_type])} rows into {table_name}")
+                self._insert_batch_data(table_data[table_type], table_name, thread_logger)
+    
     def _process_batch(self, batch_data: List[Dict[str, Any]], table_name: str, thread_logger=None):
-        """Process a batch of data"""
+        """Process a batch of data (Legacy Single-Table mode)"""
         if not batch_data:
             return
             
@@ -504,6 +629,62 @@ class RealTimeProcessor:
         
         return grouped
     
+    def _prepare_wide_row_multi_table(self, timestamp: datetime, channels: List[Dict[str, Any]], table_type: str, thread_logger=None) -> Optional[Dict[str, Any]]:
+        """Prepare a single row for multi-table insertion"""
+        if thread_logger is None:
+            thread_logger = logger
+        
+        thread_logger.debug(f"🔍 Preparing wide row for {table_type} at {timestamp}")
+        
+        # Start with created_time
+        row_data = {'created_time': timestamp}
+        
+        processed_channels = 0
+        
+        # Add data for each channel
+        for channel_data in channels:
+            channel_id = channel_data['data_channel_id']
+            value_format = channel_data['value_format']
+            
+            # Convert channel to column name
+            col_name = self._channel_to_column_name(channel_id)
+            
+            # Get the appropriate value based on format
+            value = self._get_value_by_format(channel_data, value_format)
+            
+            # Store value (convert to double)
+            if value is not None:
+                try:
+                    row_data[col_name] = float(value)
+                except (ValueError, TypeError):
+                    row_data[col_name] = None
+            else:
+                row_data[col_name] = None
+            
+            processed_channels += 1
+        
+        thread_logger.debug(f"   📊 Processed channels: {processed_channels}")
+        
+        return row_data if processed_channels > 0 else None
+    
+    def _channel_to_column_name(self, channel: str) -> str:
+        """Convert channel ID to column name"""
+        # Remove leading /
+        if channel.startswith('/'):
+            channel = channel[1:]
+        
+        # Replace / with _
+        col_name = channel.replace('/', '_')
+        
+        # Remove consecutive _
+        while '__' in col_name:
+            col_name = col_name.replace('__', '_')
+        
+        # Remove leading/trailing _
+        col_name = col_name.strip('_')
+        
+        return col_name
+    
     def _get_table_columns(self, table_name: str) -> Set[str]:
         """Get table columns with thread-safe caching"""
         # Convert table name to lowercase to match PostgreSQL behavior
@@ -512,7 +693,21 @@ class RealTimeProcessor:
         # Thread-safe cache access
         with self.cache_lock:
             if table_name_lower not in self.table_columns_cache:
-                existing_columns_list = table_generator.get_table_columns(table_name_lower)
+                if self.use_multi_table:
+                    # Multi-table mode: get columns from information_schema
+                    query = """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'tenant'
+                    AND table_name = %s
+                    ORDER BY ordinal_position
+                    """
+                    result = db_manager.execute_query(query, (table_name_lower,))
+                    existing_columns_list = [row['column_name'] for row in result] if result else []
+                else:
+                    # Legacy mode: use table_generator
+                    existing_columns_list = table_generator.get_table_columns(table_name_lower)
+                
                 self.table_columns_cache[table_name_lower] = set(existing_columns_list)
                 logger.debug(f"📋 Cached {len(existing_columns_list)} columns for {table_name_lower}")
             
@@ -676,8 +871,27 @@ class RealTimeProcessor:
             thread_logger.error(f"SQL: {insert_sql}")
             raise
     
-    def _create_table_for_ship(self, ship_id: str, thread_logger=None):
-        """Create table for ship if it doesn't exist or has wrong column count"""
+    def _ensure_multi_tables_exist(self, ship_id: str, thread_logger=None):
+        """Ensure all 3 tables exist for ship (Multi-Table mode)"""
+        if thread_logger is None:
+            thread_logger = get_ship_thread_logger(ship_id)
+        
+        try:
+            # Use multi_table_generator to create all tables
+            success = self.table_generator.ensure_all_tables_exist(ship_id)
+            
+            if success:
+                thread_logger.debug(f"All 3 tables ready for {ship_id}")
+            else:
+                thread_logger.error(f"Failed to create tables for {ship_id}")
+                raise RuntimeError(f"Table creation failed for {ship_id}")
+                
+        except Exception as e:
+            thread_logger.error(f"Error ensuring multi-tables for {ship_id}: {e}")
+            raise
+    
+    def _create_table_for_ship_legacy(self, ship_id: str, thread_logger=None):
+        """Create table for ship if it doesn't exist or has wrong column count (Legacy mode)"""
         if thread_logger is None:
             thread_logger = get_ship_thread_logger(ship_id)
             
