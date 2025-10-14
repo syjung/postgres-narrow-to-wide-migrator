@@ -478,9 +478,20 @@ class RealTimeProcessor:
                 thread_logger.warning(f"⚠️ Slow query detected: {execution_time:.2f}s execution time")
             
             # Check for unusually large data volumes (potential performance issue)
-            if record_count >= 5000:  # High volume warning threshold
+            # Multi-Table mode: higher threshold since data is distributed to 3 tables
+            volume_threshold = 15000 if self.use_multi_table else 5000
+            
+            if record_count >= volume_threshold:
                 thread_logger.warning(f"⚠️ High volume detected: {record_count} records in 1 minute")
-                thread_logger.warning(f"⚠️ Consider monitoring system performance")
+                if self.use_multi_table:
+                    thread_logger.warning(f"⚠️ Data will be distributed to 3 tables")
+                    thread_logger.info(f"   Estimated per table: ~{record_count // 3:,} records")
+                else:
+                    thread_logger.warning(f"⚠️ Consider monitoring system performance")
+            elif record_count >= 10000 and self.use_multi_table:
+                # Info level for moderately high volume in Multi-Table mode
+                thread_logger.info(f"📊 Moderate volume: {record_count} records, distributed to 3 tables")
+                thread_logger.info(f"   Estimated per table: ~{record_count // 3:,} records")
             
             return result
             
