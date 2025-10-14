@@ -36,18 +36,20 @@ class MultiTableChunkedStrategy:
         logger.info(f"🔍 Getting data chunks for {ship_id} (cutoff: {cutoff_time})")
         
         # 고정된 시간 범위 사용 (MIN/MAX 조회 없이 빠르게!)
-        # Legacy 방식과 동일하게 처리
+        # Batch migration은 최근 데이터만 처리 (Realtime이 나머지 처리)
         if cutoff_time:
             end_time = cutoff_time
         else:
             end_time = datetime.now()
         
-        # 시작 시간을 과거로 설정 (실제 데이터가 있을 가능성이 높은 시점)
-        # 최근 1년의 데이터를 처리
-        start_time = end_time - timedelta(days=365)
+        # 시작 시간: config에 설정된 기간만 처리 (더 빠르고 효율적)
+        # Realtime processor가 계속 최신 데이터를 처리하므로
+        # Batch는 초기 설정이나 재처리 용도로만 사용
+        lookback_days = migration_config.batch_migration_lookback_days
+        start_time = end_time - timedelta(days=lookback_days)
         
         logger.info(f"📅 Using fixed time range: {start_time} to {end_time}")
-        logger.info(f"📅 This will cover the past year of data")
+        logger.info(f"📅 This will cover the past {lookback_days} days of data")
         
         # Generate chunks
         chunks = []
