@@ -522,15 +522,17 @@ class RealTimeProcessor:
     def _process_batch_multi_table(self, batch_data: List[Dict[str, Any]], ship_id: str, thread_logger=None):
         """Process a batch of data to 3 tables (Multi-Table mode)"""
         if not batch_data:
+            thread_logger.warning("⚠️ _process_batch_multi_table: batch_data is empty")
             return
             
         if thread_logger is None:
             thread_logger = get_ship_thread_logger(ship_id)
         
-        thread_logger.debug(f"🔍 Processing batch with {len(batch_data)} records (Multi-Table)")
+        thread_logger.info(f"🔍 Processing batch: {len(batch_data)} records (Multi-Table mode)")
         
         # Group data by timestamp
         grouped_data = self._group_data_by_timestamp(batch_data)
+        thread_logger.info(f"   📊 Grouped into {len(grouped_data)} timestamps")
         
         # Prepare data for each table type
         table_data = {
@@ -542,7 +544,10 @@ class RealTimeProcessor:
         for timestamp, channels in grouped_data.items():
             # Skip if already processed
             if timestamp in self.processed_timestamps:
+                thread_logger.debug(f"   ⏭️ Skipping already processed timestamp: {timestamp}")
                 continue
+            
+            thread_logger.debug(f"   🔄 Processing timestamp {timestamp}: {len(channels)} channels")
             
             # Prepare row for each table type
             for table_type in self.channel_router.get_all_table_types():
@@ -555,7 +560,10 @@ class RealTimeProcessor:
                 ]
                 
                 if not filtered_channels:
+                    thread_logger.debug(f"      No channels for {table_type}")
                     continue
+                
+                thread_logger.debug(f"      {table_type}: {len(filtered_channels)} channels")
                 
                 # Prepare wide row
                 row_data = self._prepare_wide_row_multi_table(
@@ -564,8 +572,17 @@ class RealTimeProcessor:
                 
                 if row_data:
                     table_data[table_type].append(row_data)
+                    thread_logger.debug(f"      Added row to {table_type}")
+                else:
+                    thread_logger.debug(f"      No row data for {table_type}")
             
             self.processed_timestamps.add(timestamp)
+        
+        # Summary before insertion
+        thread_logger.info(f"   📊 Prepared data:")
+        for table_type in self.channel_router.get_all_table_types():
+            count = len(table_data[table_type])
+            thread_logger.info(f"      - {table_type}: {count} rows")
         
         # Insert data into each table
         for table_type in self.channel_router.get_all_table_types():
@@ -573,6 +590,8 @@ class RealTimeProcessor:
                 table_name = f"{table_type}_{ship_id.lower()}"
                 thread_logger.info(f"💾 Inserting {len(table_data[table_type])} rows into {table_name}")
                 self._insert_batch_data(table_data[table_type], table_name, thread_logger)
+            else:
+                thread_logger.debug(f"   ⏭️ No data to insert into {table_type}")
     
     def _process_batch(self, batch_data: List[Dict[str, Any]], table_name: str, thread_logger=None):
         """Process a batch of data (Legacy Single-Table mode)"""
