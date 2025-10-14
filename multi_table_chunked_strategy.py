@@ -39,18 +39,43 @@ class MultiTableChunkedStrategy:
         
         thread_logger.info(f"🔍 Getting data chunks for {ship_id} (cutoff: {cutoff_time})")
         
-        # 고정 시간 범위 사용 (DB 쿼리 없이 즉시 생성!)
-        if cutoff_time:
+        # Import cutoff_time_manager
+        from cutoff_time_manager import cutoff_time_manager
+        
+        # Determine start time (from batch cutoff or default)
+        batch_cutoff = cutoff_time_manager.load_batch_cutoff_time(ship_id)
+        if batch_cutoff:
+            start_time = batch_cutoff
+            thread_logger.info(f"📂 Resuming from batch cutoff: {start_time}")
+        else:
+            # No previous batch run, start from configured lookback period
+            lookback_days = migration_config.batch_lookback_days
+            if cutoff_time:
+                start_time = cutoff_time - timedelta(days=lookback_days)
+            else:
+                start_time = datetime.now() - timedelta(days=lookback_days)
+            thread_logger.info(f"📂 No batch cutoff found, starting from {lookback_days} days ago: {start_time}")
+        
+        # Determine end time (stop at realtime start or provided cutoff)
+        realtime_cutoff = cutoff_time_manager.load_realtime_cutoff_time(ship_id)
+        
+        if realtime_cutoff:
+            # ✅ Realtime already started - Batch stops at realtime start point!
+            end_time = realtime_cutoff
+            thread_logger.warning(f"⚠️ Realtime detected! Batch will stop at: {end_time}")
+            thread_logger.info(f"📊 This prevents overlap with realtime processing")
+        elif cutoff_time:
             end_time = cutoff_time
+            thread_logger.info(f"📂 Using provided cutoff: {end_time}")
         else:
             end_time = datetime.now()
+            thread_logger.info(f"📂 No cutoff specified, processing up to now: {end_time}")
         
-        # Config에서 설정한 기간만큼 과거로 설정
-        lookback_days = migration_config.batch_lookback_days
-        start_time = end_time - timedelta(days=lookback_days)
+        thread_logger.info(f"📅 Batch time range: {start_time} to {end_time}")
         
-        thread_logger.info(f"📅 Using fixed time range: {start_time} to {end_time}")
-        thread_logger.info(f"📅 Processing {lookback_days} days of data (configurable in config.py)")
+        time_diff = end_time - start_time
+        days_diff = time_diff.days
+        thread_logger.info(f"📅 Processing {days_diff} days of data")
         
         # Generate chunks
         chunks = []

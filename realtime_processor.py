@@ -301,18 +301,23 @@ class RealTimeProcessor:
                 thread_logger.debug(f"Table {table_name} already exists")
         
         # STEP 2: Process data (only if data exists)
-        # Get the last processed time for this ship
+        # Get the last processed time for this ship (realtime-specific)
         last_processed_time = self._get_last_processed_time(ship_id)
         
-        # Use migration cutoff time if not specified, otherwise use last processed time
+        # Determine cutoff time
         if self.cutoff_time and (not last_processed_time or self.cutoff_time > last_processed_time):
             cutoff_time = self.cutoff_time
         elif last_processed_time:
             cutoff_time = last_processed_time
         else:
-            # Fallback: use 5 minutes ago to ensure we don't miss data
+            # ✅ First time running realtime for this ship
             cutoff_time = datetime.now() - timedelta(minutes=5)
-            thread_logger.warning(f"No cutoff time found for {ship_id}, using 5 minutes ago: {cutoff_time}")
+            thread_logger.warning(f"🚀 Realtime starting for first time, cutoff: {cutoff_time}")
+            
+            # ✅ Record realtime start time (this becomes the boundary for Batch)
+            cutoff_time_manager.save_realtime_cutoff_time(ship_id, cutoff_time)
+            thread_logger.info(f"📅 Recorded realtime start time for {ship_id}: {cutoff_time}")
+            thread_logger.info(f"📊 Batch migration will stop at this time to avoid overlap")
         
         thread_logger.info(f"🔍 Processing data for {ship_id} since {cutoff_time}")
         
@@ -342,14 +347,20 @@ class RealTimeProcessor:
             thread_logger.info(f"✅ Updated last processed time for {ship_id}: {latest_timestamp}")
     
     def _get_last_processed_time(self, ship_id: str) -> Optional[datetime]:
-        """Get the last processed timestamp for a ship (Multi-Table support)"""
-        # Check if we have a ship-specific cutoff time file
+        """Get the last processed timestamp for a ship (Realtime-specific cutoff)"""
+        # ✅ Use REALTIME-specific cutoff time file
+        realtime_cutoff_time = cutoff_time_manager.load_realtime_cutoff_time(ship_id)
+        if realtime_cutoff_time:
+            logger.debug(f"Using realtime cutoff time for {ship_id}: {realtime_cutoff_time}")
+            return realtime_cutoff_time
+        
+        # Legacy fallback (for backward compatibility)
         ship_cutoff_time = cutoff_time_manager.load_ship_cutoff_time(ship_id)
         if ship_cutoff_time:
-            logger.debug(f"Using ship-specific cutoff time for {ship_id}: {ship_cutoff_time}")
+            logger.debug(f"Using legacy ship cutoff time for {ship_id}: {ship_cutoff_time}")
             return ship_cutoff_time
         
-        # Fallback: Check global cutoff time (for backward compatibility)
+        # Global fallback (for backward compatibility)
         global_cutoff_time = cutoff_time_manager.load_cutoff_time()
         if global_cutoff_time:
             logger.debug(f"Using global cutoff time for {ship_id}: {global_cutoff_time}")
@@ -405,20 +416,21 @@ class RealTimeProcessor:
         """Update the last processed timestamp for a ship (thread-safe)"""
         from cutoff_time_strategy import cutoff_strategy
         
-        # Thread-safe cutoff time update - now ship-specific
+        # Thread-safe cutoff time update - REALTIME-specific
         with self.cutoff_lock:
-            # Save ship-specific cutoff time
-            cutoff_time_manager.save_ship_cutoff_time(ship_id, timestamp)
+            # ✅ Save REALTIME-specific cutoff time
+            cutoff_time_manager.save_realtime_cutoff_time(ship_id, timestamp)
             
-            # Also update global cutoff time for backward compatibility
+            # Legacy: Also update for backward compatibility
+            cutoff_time_manager.save_ship_cutoff_time(ship_id, timestamp)
             cutoff_time_manager.save_cutoff_time(timestamp)
             
             # Mark the target minute as processed
             window = cutoff_strategy.get_processing_window()
             cutoff_strategy.mark_minute_processed(window['target_minute'])
             
-            logger.debug(f"Updated ship cutoff time to {timestamp} for ship {ship_id}")
-            logger.debug(f"Updated global cutoff time to {timestamp}")
+            logger.debug(f"Updated REALTIME cutoff time to {timestamp} for ship {ship_id}")
+            logger.debug(f"Updated legacy cutoff times for backward compatibility")
             logger.debug(f"Marked minute {window['target_minute']} as processed")
     
     def _get_new_data(self, ship_id: str, cutoff_time: datetime, thread_logger=None) -> List[Dict[str, Any]]:

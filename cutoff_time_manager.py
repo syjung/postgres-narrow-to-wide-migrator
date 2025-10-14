@@ -102,7 +102,7 @@ class CutoffTimeManager:
     
     def save_ship_cutoff_time(self, ship_id: str, cutoff_time: datetime) -> bool:
         """
-        Save cutoff time for a specific ship
+        Save cutoff time for a specific ship (legacy - for backward compatibility)
         
         Args:
             ship_id: Ship ID
@@ -126,7 +126,7 @@ class CutoffTimeManager:
     
     def load_ship_cutoff_time(self, ship_id: str) -> Optional[datetime]:
         """
-        Load cutoff time for a specific ship
+        Load cutoff time for a specific ship (legacy - for backward compatibility)
         
         Args:
             ship_id: Ship ID
@@ -154,6 +154,126 @@ class CutoffTimeManager:
             
         except Exception as e:
             logger.error(f"Failed to load ship cutoff time for {ship_id}: {e}")
+            return None
+    
+    # ========================================
+    # Batch-specific cutoff time methods
+    # ========================================
+    
+    def save_batch_cutoff_time(self, ship_id: str, cutoff_time: datetime) -> bool:
+        """
+        Save batch migration cutoff time for a specific ship
+        
+        Args:
+            ship_id: Ship ID
+            cutoff_time: Last processed time by batch migration
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            batch_cutoff_file = os.path.join(self.cutoff_time_dir, f"{ship_id.lower()}_batch.txt")
+            
+            with open(batch_cutoff_file, 'w') as f:
+                f.write(cutoff_time.isoformat())
+            
+            logger.debug(f"Batch cutoff time saved: {ship_id} -> {cutoff_time}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to save batch cutoff time for {ship_id}: {e}")
+            return False
+    
+    def load_batch_cutoff_time(self, ship_id: str) -> Optional[datetime]:
+        """
+        Load batch migration cutoff time for a specific ship
+        
+        Args:
+            ship_id: Ship ID
+            
+        Returns:
+            Cutoff time if exists, None otherwise
+        """
+        try:
+            batch_cutoff_file = os.path.join(self.cutoff_time_dir, f"{ship_id.lower()}_batch.txt")
+            
+            if not os.path.exists(batch_cutoff_file):
+                logger.debug(f"No batch cutoff time file found for ship: {ship_id}")
+                return None
+            
+            with open(batch_cutoff_file, 'r') as f:
+                cutoff_str = f.read().strip()
+            
+            if not cutoff_str:
+                logger.debug(f"Batch cutoff time file is empty for ship: {ship_id}")
+                return None
+            
+            cutoff_time = datetime.fromisoformat(cutoff_str)
+            logger.debug(f"Batch cutoff time loaded: {ship_id} -> {cutoff_time}")
+            return cutoff_time
+            
+        except Exception as e:
+            logger.error(f"Failed to load batch cutoff time for {ship_id}: {e}")
+            return None
+    
+    # ========================================
+    # Realtime-specific cutoff time methods
+    # ========================================
+    
+    def save_realtime_cutoff_time(self, ship_id: str, cutoff_time: datetime) -> bool:
+        """
+        Save realtime processing cutoff time for a specific ship
+        
+        Args:
+            ship_id: Ship ID
+            cutoff_time: Last processed time by realtime processor
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            realtime_cutoff_file = os.path.join(self.cutoff_time_dir, f"{ship_id.lower()}_realtime.txt")
+            
+            with open(realtime_cutoff_file, 'w') as f:
+                f.write(cutoff_time.isoformat())
+            
+            logger.debug(f"Realtime cutoff time saved: {ship_id} -> {cutoff_time}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to save realtime cutoff time for {ship_id}: {e}")
+            return False
+    
+    def load_realtime_cutoff_time(self, ship_id: str) -> Optional[datetime]:
+        """
+        Load realtime processing cutoff time for a specific ship
+        
+        Args:
+            ship_id: Ship ID
+            
+        Returns:
+            Cutoff time if exists, None otherwise
+        """
+        try:
+            realtime_cutoff_file = os.path.join(self.cutoff_time_dir, f"{ship_id.lower()}_realtime.txt")
+            
+            if not os.path.exists(realtime_cutoff_file):
+                logger.debug(f"No realtime cutoff time file found for ship: {ship_id}")
+                return None
+            
+            with open(realtime_cutoff_file, 'r') as f:
+                cutoff_str = f.read().strip()
+            
+            if not cutoff_str:
+                logger.debug(f"Realtime cutoff time file is empty for ship: {ship_id}")
+                return None
+            
+            cutoff_time = datetime.fromisoformat(cutoff_str)
+            logger.debug(f"Realtime cutoff time loaded: {ship_id} -> {cutoff_time}")
+            return cutoff_time
+            
+        except Exception as e:
+            logger.error(f"Failed to load realtime cutoff time for {ship_id}: {e}")
             return None
     
     def get_all_ship_cutoff_times(self) -> Dict[str, Optional[datetime]]:
