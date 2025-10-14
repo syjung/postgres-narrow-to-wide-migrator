@@ -33,6 +33,8 @@ class MultiTableChunkedStrategy:
         Returns:
             (start_time, end_time) 튜플의 리스트
         """
+        logger.info(f"🔍 Getting data chunks for {ship_id} (cutoff: {cutoff_time})")
+        
         # Get data time range
         time_range = self._get_data_time_range(ship_id, cutoff_time)
         
@@ -59,27 +61,67 @@ class MultiTableChunkedStrategy:
         return chunks
     
     def _get_data_time_range(self, ship_id: str, cutoff_time: Optional[datetime] = None) -> Optional[Tuple[datetime, datetime]]:
-        """Get the time range of data for a ship"""
-        query = """
-        SELECT 
-            MIN(created_time) as min_time,
-            MAX(created_time) as max_time
+        """Get the time range of data for a ship (optimized with separate queries)"""
+        import time as time_module
+        
+        logger.info(f"🔍 Querying data time range for {ship_id}...")
+        start_query_time = time_module.time()
+        
+        # Optimize: Use separate queries with LIMIT 1 instead of MIN/MAX aggregation
+        # This is much faster on large tables with indexes
+        
+        # Get earliest time
+        min_query = """
+        SELECT created_time
         FROM tenant.tbl_data_timeseries
         WHERE ship_id = %s
         """
         
         if cutoff_time:
-            query += " AND created_time < %s"
-            params = (ship_id, cutoff_time)
+            min_query += " AND created_time < %s"
+            min_params = (ship_id, cutoff_time)
         else:
-            params = (ship_id,)
+            min_params = (ship_id,)
         
-        result = db_manager.execute_query(query, params)
+        min_query += " ORDER BY created_time ASC LIMIT 1"
         
-        if not result or not result[0]['min_time']:
-            return None
+        # Get latest time
+        max_query = """
+        SELECT created_time
+        FROM tenant.tbl_data_timeseries
+        WHERE ship_id = %s
+        """
         
-        return (result[0]['min_time'], result[0]['max_time'])
+        if cutoff_time:
+            max_query += " AND created_time < %s"
+            max_params = (ship_id, cutoff_time)
+        else:
+            max_params = (ship_id,)
+        
+        max_query += " ORDER BY created_time DESC LIMIT 1"
+        
+        try:
+            # Execute queries
+            min_result = db_manager.execute_query(min_query, min_params)
+            max_result = db_manager.execute_query(max_query, max_params)
+            
+            end_query_time = time_module.time()
+            query_duration = end_query_time - start_query_time
+            
+            if not min_result or not max_result:
+                logger.warning(f"⚠️ No data found for {ship_id} (query took {query_duration:.2f}s)")
+                return None
+            
+            min_time = min_result[0]['created_time']
+            max_time = max_result[0]['created_time']
+            
+            logger.success(f"✅ Data range found for {ship_id}: {min_time} to {max_time} (query took {query_duration:.2f}s)")
+            
+            return (min_time, max_time)
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting data time range for {ship_id}: {e}")
+            raise
     
     def migrate_chunk(
         self, 
