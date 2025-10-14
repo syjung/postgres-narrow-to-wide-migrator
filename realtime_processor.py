@@ -549,6 +549,11 @@ class RealTimeProcessor:
             
             thread_logger.debug(f"   🔄 Processing timestamp {timestamp}: {len(channels)} channels")
             
+            # Debug: Show sample raw channels
+            if len(channels) > 0:
+                sample_raw = channels[0]
+                thread_logger.info(f"   🔍 Sample raw channel data: {sample_raw}")
+            
             # Prepare row for each table type
             for table_type in self.channel_router.get_all_table_types():
                 table_name = f"{table_type}_{ship_id.lower()}"
@@ -560,10 +565,15 @@ class RealTimeProcessor:
                 ]
                 
                 if not filtered_channels:
-                    thread_logger.debug(f"      No channels for {table_type}")
+                    thread_logger.info(f"      ⚠️ No channels for {table_type} at {timestamp}")
                     continue
                 
-                thread_logger.debug(f"      {table_type}: {len(filtered_channels)} channels")
+                thread_logger.info(f"      ✅ {table_type}: {len(filtered_channels)} channels at {timestamp}")
+                
+                # Debug: Show sample channel IDs
+                if len(filtered_channels) > 0:
+                    sample_channels = [ch['data_channel_id'] for ch in filtered_channels[:3]]
+                    thread_logger.info(f"         Sample channels: {sample_channels}")
                 
                 # Prepare wide row
                 row_data = self._prepare_wide_row_multi_table(
@@ -571,10 +581,11 @@ class RealTimeProcessor:
                 )
                 
                 if row_data:
+                    row_cols = len(row_data) - 1  # Exclude created_time
                     table_data[table_type].append(row_data)
-                    thread_logger.debug(f"      Added row to {table_type}")
+                    thread_logger.debug(f"      ✅ Added row to {table_type} with {row_cols} data columns")
                 else:
-                    thread_logger.debug(f"      No row data for {table_type}")
+                    thread_logger.warning(f"      ⚠️ _prepare_wide_row_multi_table returned None for {table_type} ({len(filtered_channels)} channels)")
             
             self.processed_timestamps.add(timestamp)
         
@@ -655,17 +666,28 @@ class RealTimeProcessor:
         if thread_logger is None:
             thread_logger = logger
         
-        thread_logger.debug(f"🔍 Preparing wide row for {table_type} at {timestamp}")
+        thread_logger.debug(f"🔍 Preparing wide row for {table_type} at {timestamp} with {len(channels)} channels")
+        
+        # Debug: Show sample channel
+        if len(channels) > 0:
+            sample = channels[0]
+            thread_logger.debug(f"   Sample channel: {sample.get('data_channel_id', 'N/A')}, format: {sample.get('value_format', 'N/A')}")
         
         # Start with created_time
         row_data = {'created_time': timestamp}
         
         processed_channels = 0
+        skipped_channels = 0
         
         # Add data for each channel
         for channel_data in channels:
-            channel_id = channel_data['data_channel_id']
-            value_format = channel_data['value_format']
+            channel_id = channel_data.get('data_channel_id')
+            if not channel_id:
+                thread_logger.warning(f"   ⚠️ Channel data missing 'data_channel_id': {channel_data}")
+                skipped_channels += 1
+                continue
+            
+            value_format = channel_data.get('value_format')
             
             # Convert channel to column name
             col_name = self._channel_to_column_name(channel_id)
@@ -677,14 +699,17 @@ class RealTimeProcessor:
             if value is not None:
                 try:
                     row_data[col_name] = float(value)
+                    processed_channels += 1
                 except (ValueError, TypeError):
                     row_data[col_name] = None
+                    thread_logger.debug(f"   ⚠️ Failed to convert value to float: {value}")
             else:
                 row_data[col_name] = None
-            
-            processed_channels += 1
         
-        thread_logger.debug(f"   📊 Processed channels: {processed_channels}")
+        thread_logger.debug(f"   📊 Processed: {processed_channels}, Skipped: {skipped_channels}, Total columns: {len(row_data)}")
+        
+        if processed_channels == 0:
+            thread_logger.warning(f"   ⚠️ No data processed for {table_type}! All {len(channels)} channels resulted in None/errors")
         
         return row_data if processed_channels > 0 else None
     
