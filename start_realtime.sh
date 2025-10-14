@@ -61,12 +61,14 @@ logger.remove()
 from simple_log_rotation import setup_simple_log_rotation
 current_log_file = setup_simple_log_rotation('logs/realtime.log', retention_days=30)
 
+# 파일 로그 (상세)
 logger.add(current_log_file, 
            format='{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}',
            level='INFO')
 
+# stdout 로그 (간소화, 날짜 포함하여 일관성 유지)
 logger.add(sys.stdout, 
-           format='<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}',
+           format='<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level}</level> | {message}',
            level='INFO')
 
 logger.info('🚀 Real-time processor starting...')

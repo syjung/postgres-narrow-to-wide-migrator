@@ -66,7 +66,7 @@ logger.add(current_log_file,
            level='INFO')
 
 logger.add(sys.stdout, 
-           format='<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}',
+           format='<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level}</level> | {message}',
            level='INFO')
 
 logger.info('🚀 Batch migration starting...')
