@@ -360,9 +360,9 @@ class RealTimeProcessor:
             if self.use_multi_table:
                 # Multi-Table: Check all 3 tables and get the latest
                 table_names = [
-                    f'tbl_1_{ship_id.lower()}',
-                    f'tbl_2_{ship_id.lower()}',
-                    f'tbl_3_{ship_id.lower()}'
+                    f'tbl_data_timeseries_{ship_id.lower()}_1',
+                    f'tbl_data_timeseries_{ship_id.lower()}_2',
+                    f'tbl_data_timeseries_{ship_id.lower()}_3'
                 ]
                 
                 latest_time = None
@@ -563,7 +563,7 @@ class RealTimeProcessor:
             
             # Prepare row for each table type
             for table_type in self.channel_router.get_all_table_types():
-                table_name = f"tbl_{table_type}_{ship_id.lower()}"
+                table_name = f"tbl_data_timeseries_{ship_id.lower()}_{table_type}"
                 
                 # Debug: Check first channel routing
                 if len(channels) > 0:
@@ -612,7 +612,7 @@ class RealTimeProcessor:
         # Insert data into each table
         for table_type in self.channel_router.get_all_table_types():
             if table_data[table_type]:
-                table_name = f"tbl_{table_type}_{ship_id.lower()}"
+                table_name = f"tbl_data_timeseries_{ship_id.lower()}_{table_type}"
                 thread_logger.info(f"💾 Inserting {len(table_data[table_type])} rows into {table_name}")
                 self._insert_batch_data(table_data[table_type], table_name, thread_logger)
             else:

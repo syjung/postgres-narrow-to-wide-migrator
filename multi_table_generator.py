@@ -81,7 +81,7 @@ class MultiTableGenerator:
         Returns:
             성공 여부
         """
-        table_name = f"tbl_1_{ship_id.lower()}"
+        table_name = f"tbl_data_timeseries_{ship_id.lower()}_1"
         channels = self.channel_router.get_all_channels_by_table(
             self.channel_router.TABLE_AUXILIARY
         )
@@ -98,7 +98,7 @@ class MultiTableGenerator:
         Returns:
             성공 여부
         """
-        table_name = f"tbl_2_{ship_id.lower()}"
+        table_name = f"tbl_data_timeseries_{ship_id.lower()}_2"
         channels = self.channel_router.get_all_channels_by_table(
             self.channel_router.TABLE_ENGINE
         )
@@ -115,7 +115,7 @@ class MultiTableGenerator:
         Returns:
             성공 여부
         """
-        table_name = f"tbl_3_{ship_id.lower()}"
+        table_name = f"tbl_data_timeseries_{ship_id.lower()}_3"
         channels = self.channel_router.get_all_channels_by_table(
             self.channel_router.TABLE_NAVIGATION
         )
@@ -222,9 +222,9 @@ class MultiTableGenerator:
         
         # 3개 테이블에 대해 인덱스 생성
         tables = [
-            f"tbl_1_{ship_id.lower()}",
-            f"tbl_2_{ship_id.lower()}",
-            f"tbl_3_{ship_id.lower()}"
+            f"tbl_data_timeseries_{ship_id.lower()}_1",
+            f"tbl_data_timeseries_{ship_id.lower()}_2",
+            f"tbl_data_timeseries_{ship_id.lower()}_3"
         ]
         
         indexes_created = 0
@@ -292,9 +292,9 @@ class MultiTableGenerator:
         logger.warning(f"⚠️ Dropping all tables for ship: {ship_id}")
         
         tables = [
-            f"tbl_1_{ship_id.lower()}",
-            f"tbl_2_{ship_id.lower()}",
-            f"tbl_3_{ship_id.lower()}"
+            f"tbl_data_timeseries_{ship_id.lower()}_1",
+            f"tbl_data_timeseries_{ship_id.lower()}_2",
+            f"tbl_data_timeseries_{ship_id.lower()}_3"
         ]
         
         success = True
@@ -320,9 +320,9 @@ class MultiTableGenerator:
             테이블 정보 딕셔너리
         """
         tables = [
-            f"tbl_1_{ship_id.lower()}",
-            f"tbl_2_{ship_id.lower()}",
-            f"tbl_3_{ship_id.lower()}"
+            f"tbl_data_timeseries_{ship_id.lower()}_1",
+            f"tbl_data_timeseries_{ship_id.lower()}_2",
+            f"tbl_data_timeseries_{ship_id.lower()}_3"
         ]
         
         info = {

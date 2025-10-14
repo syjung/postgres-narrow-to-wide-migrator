@@ -55,9 +55,9 @@ class MigrationConfig(BaseSettings):
         '3': 'column_list_navigation_ship.txt'
     }
     table_name_patterns: ClassVar[dict] = {
-        '1': 'tbl_1_{ship_id}',
-        '2': 'tbl_2_{ship_id}',
-        '3': 'tbl_3_{ship_id}'
+        '1': 'tbl_data_timeseries_{ship_id}_1',
+        '2': 'tbl_data_timeseries_{ship_id}_2',
+        '3': 'tbl_data_timeseries_{ship_id}_3'
     }
     
     # Performance optimization settings

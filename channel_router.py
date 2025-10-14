@@ -145,13 +145,13 @@ class ChannelRouter:
             ship_id: 선박 ID
             
         Returns:
-            테이블명 (예: 'tbl_1_imo9976903')
+            테이블명 (예: 'tbl_data_timeseries_imo9976903_1')
         """
         table_type = self.get_table_type(channel_id)
         if table_type is None:
             return None
         
-        return f"tbl_{table_type}_{ship_id.lower()}"
+        return f"tbl_data_timeseries_{ship_id.lower()}_{table_type}"
     
     def filter_channels_by_table(self, channels: List[str], table_type: str) -> List[str]:
         """
