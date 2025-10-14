@@ -160,15 +160,16 @@ class MultiTableChunkedStrategy:
                     'records_processed': 0
                 }
             
-            thread_logger.info(f"✅ Extracted {len(chunk_data)} records")
+            thread_logger.info(f"✅ Extracted {len(chunk_data)} records from narrow table")
             
             # Step 2: Transform to wide format
             thread_logger.info(f"🔄 Transforming data to wide format...")
             wide_data = self._transform_chunk_to_wide(chunk_data)
-            thread_logger.info(f"✅ Transformed to {len(wide_data)} wide records")
+            thread_logger.info(f"✅ Transformed to {len(wide_data)} wide records (grouped by timestamp)")
             
             # Step 3: Split by table type and insert
             total_inserted = 0
+            insert_summary = {}
             
             for table_type in self.channel_router.get_all_table_types():
                 table_name = f"{table_type}_{ship_id.lower()}"
@@ -178,6 +179,7 @@ class MultiTableChunkedStrategy:
                 
                 if not table_data:
                     thread_logger.debug(f"⏭️ No data for table: {table_name}")
+                    insert_summary[table_type] = 0
                     continue
                 
                 thread_logger.info(f"💾 Inserting {len(table_data)} records into {table_name}...")
@@ -185,18 +187,28 @@ class MultiTableChunkedStrategy:
                 try:
                     inserted = self._insert_wide_data(table_name, table_data, thread_logger)
                     total_inserted += inserted
+                    insert_summary[table_type] = inserted
                     thread_logger.success(f"✅ Inserted {inserted} records into {table_name}")
                     
                 except Exception as e:
                     thread_logger.error(f"❌ Failed to insert into {table_name}: {e}")
+                    insert_summary[table_type] = 0
                     # Continue with next table instead of failing entire chunk
                     continue
+            
+            # Summary log
+            thread_logger.success(f"📊 Chunk completed: {len(chunk_data)} narrow records → {total_inserted} wide records inserted")
+            thread_logger.info(f"   └─ auxiliary_systems: {insert_summary.get('auxiliary_systems', 0)} rows")
+            thread_logger.info(f"   └─ engine_generator: {insert_summary.get('engine_generator', 0)} rows")
+            thread_logger.info(f"   └─ navigation_ship: {insert_summary.get('navigation_ship', 0)} rows")
             
             return {
                 'status': 'completed',
                 'records_processed': total_inserted,
                 'chunk_start': start_time,
-                'chunk_end': end_time
+                'chunk_end': end_time,
+                'insert_summary': insert_summary,
+                'narrow_records': len(chunk_data)
             }
             
         except Exception as e:
