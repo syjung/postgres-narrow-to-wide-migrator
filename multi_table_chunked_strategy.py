@@ -178,11 +178,9 @@ class MultiTableChunkedStrategy:
             thread_logger.warning("⚠️ No allowed channels found")
             return []
         
-        # Convert to list for SQL
-        channels_list = list(all_channels)
-        placeholders = ','.join(['%s'] * len(channels_list))
-        
-        query = f"""
+        # Don't use IN clause with 1037 items - it's slow!
+        # Get all data for the ship/time range, filter in application
+        query = """
         SELECT 
             created_time,
             data_channel_id,
@@ -197,14 +195,24 @@ class MultiTableChunkedStrategy:
         WHERE created_time >= %s 
         AND created_time < %s
         AND ship_id = %s
-        AND data_channel_id IN ({placeholders})
         ORDER BY created_time
         """
         
-        params = [start_time, end_time, ship_id] + channels_list
-        result = db_manager.execute_query(query, tuple(params))
+        params = (start_time, end_time, ship_id)
+        result = db_manager.execute_query(query, params)
         
-        return result if result else []
+        if not result:
+            return []
+        
+        # Filter by allowed channels in application
+        filtered_result = [
+            row for row in result 
+            if row['data_channel_id'] in all_channels
+        ]
+        
+        thread_logger.debug(f"   📊 Fetched {len(result)} rows, filtered to {len(filtered_result)} rows")
+        
+        return filtered_result
     
     def _transform_chunk_to_wide(self, chunk_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Transform chunk data to wide format"""
