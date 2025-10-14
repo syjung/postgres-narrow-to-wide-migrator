@@ -13,10 +13,24 @@ from config import logging_config
 class MigrationMonitor:
     """Monitors migration progress and system health"""
     
-    def __init__(self):
+    def __init__(self, setup_logging: bool = False):
+        """
+        Initialize MigrationMonitor
+        
+        Args:
+            setup_logging: Whether to setup global logging (default: False)
+                          Set to True only when used standalone.
+                          For realtime/batch scripts, logging is configured in the script.
+        """
         self.log_file = logging_config.log_file
         self._ensure_log_directory()
-        self._setup_logging()
+        
+        # Only setup logging if explicitly requested
+        # This prevents conflicts with script-specific logging configuration
+        if setup_logging:
+            self._setup_logging()
+        else:
+            logger.debug("MigrationMonitor: Using external logging configuration")
     
     def _ensure_log_directory(self):
         """Ensure log directory exists"""
@@ -289,6 +303,7 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             return f"Error generating report: {e}"
 
 
-# Global monitoring instance
-monitor = MigrationMonitor()
+# Global monitoring instance (without automatic logging setup)
+# Logging should be configured in the calling script (start_realtime.sh, start_batch.sh, etc.)
+monitor = MigrationMonitor(setup_logging=False)
 

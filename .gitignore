@@ -123,6 +123,7 @@ logs/
 *.pid
 migration_cutoff_time.txt
 *.log
+ship_*.log
 
 # Reprocess specific
 failed_chunks_after_reprocess.csv
