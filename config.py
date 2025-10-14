@@ -155,6 +155,7 @@ class MigrationConfig(BaseSettings):
     chunk_size_hours: int = 2  # Default chunk size (can be reduced for high-volume periods)
     max_records_per_chunk: int = 1000000  # Threshold for chunk size reduction
     adaptive_chunking: bool = True  # Enable dynamic chunk size adjustment
+    batch_lookback_days: int = 365  # How many days back to process in batch migration (1 year default)
     
     # Value format mapping
     VALUE_FORMAT_MAPPING: ClassVar[dict] = {
