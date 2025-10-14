@@ -94,9 +94,7 @@ class ChannelRouter:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith('#'):  # 빈 줄과 주석 제외
-                        # 앞에 / 있으면 제거
-                        if line.startswith('/'):
-                            line = line[1:]
+                        # 채널 ID를 파일에 있는 그대로 사용 (슬래시 포함)
                         channels.add(line)
             
             logger.debug(f"✅ Loaded {len(channels)} channels from {filename}")
