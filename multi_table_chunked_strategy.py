@@ -24,7 +24,7 @@ class MultiTableChunkedStrategy:
     
     def get_data_chunks(self, ship_id: str, cutoff_time: Optional[datetime] = None) -> List[Tuple[datetime, datetime]]:
         """
-        시간 범위를 청크로 분할
+        시간 범위를 청크로 분할 (고정 시간 범위 사용 - 빠름!)
         
         Args:
             ship_id: 선박 ID
@@ -35,15 +35,19 @@ class MultiTableChunkedStrategy:
         """
         logger.info(f"🔍 Getting data chunks for {ship_id} (cutoff: {cutoff_time})")
         
-        # Get data time range
-        time_range = self._get_data_time_range(ship_id, cutoff_time)
+        # 고정된 시간 범위 사용 (MIN/MAX 조회 없이 빠르게!)
+        # Legacy 방식과 동일하게 처리
+        if cutoff_time:
+            end_time = cutoff_time
+        else:
+            end_time = datetime.now()
         
-        if not time_range:
-            logger.warning(f"⚠️ No data found for ship: {ship_id}")
-            return []
+        # 시작 시간을 과거로 설정 (실제 데이터가 있을 가능성이 높은 시점)
+        # 최근 1년의 데이터를 처리
+        start_time = end_time - timedelta(days=365)
         
-        start_time, end_time = time_range
-        logger.info(f"📊 Data range for {ship_id}: {start_time} to {end_time}")
+        logger.info(f"📅 Using fixed time range: {start_time} to {end_time}")
+        logger.info(f"📅 This will cover the past year of data")
         
         # Generate chunks
         chunks = []
@@ -59,87 +63,6 @@ class MultiTableChunkedStrategy:
         
         logger.info(f"📊 Generated {len(chunks)} chunks ({self.chunk_size_hours}-hour chunks)")
         return chunks
-    
-    def _get_data_time_range(self, ship_id: str, cutoff_time: Optional[datetime] = None) -> Optional[Tuple[datetime, datetime]]:
-        """Get the time range of data for a ship (optimized with separate queries)"""
-        import time as time_module
-        
-        logger.info(f"🔍 Querying data time range for {ship_id}...")
-        start_query_time = time_module.time()
-        
-        # Optimize: Use separate queries with LIMIT 1 instead of MIN/MAX aggregation
-        # This is much faster on large tables with indexes
-        
-        # Get earliest time - use index on created_time
-        min_query = """
-        SELECT created_time
-        FROM tenant.tbl_data_timeseries
-        WHERE created_time IS NOT NULL
-        AND ship_id = %s
-        """
-        
-        if cutoff_time:
-            min_query += " AND created_time < %s"
-            min_params = (ship_id, cutoff_time)
-        else:
-            min_params = (ship_id,)
-        
-        min_query += " ORDER BY created_time ASC LIMIT 1"
-        
-        # Get latest time - use index on created_time
-        max_query = """
-        SELECT created_time
-        FROM tenant.tbl_data_timeseries
-        WHERE created_time IS NOT NULL
-        AND ship_id = %s
-        """
-        
-        if cutoff_time:
-            max_query += " AND created_time < %s"
-            max_params = (ship_id, cutoff_time)
-        else:
-            max_params = (ship_id,)
-        
-        max_query += " ORDER BY created_time DESC LIMIT 1"
-        
-        try:
-            # Execute MIN query
-            logger.debug(f"   Executing MIN query for {ship_id}...")
-            min_start = time_module.time()
-            min_result = db_manager.execute_query(min_query, min_params)
-            min_duration = time_module.time() - min_start
-            logger.debug(f"   MIN query completed in {min_duration:.2f}s")
-            
-            # Execute MAX query
-            logger.debug(f"   Executing MAX query for {ship_id}...")
-            max_start = time_module.time()
-            max_result = db_manager.execute_query(max_query, max_params)
-            max_duration = time_module.time() - max_start
-            logger.debug(f"   MAX query completed in {max_duration:.2f}s")
-            
-            end_query_time = time_module.time()
-            query_duration = end_query_time - start_query_time
-            
-            if not min_result or not max_result:
-                logger.warning(f"⚠️ No data found for {ship_id} (query took {query_duration:.2f}s)")
-                return None
-            
-            min_time = min_result[0]['created_time']
-            max_time = max_result[0]['created_time']
-            
-            logger.success(f"✅ Data range found for {ship_id}: {min_time} to {max_time} (total: {query_duration:.2f}s, min: {min_duration:.2f}s, max: {max_duration:.2f}s)")
-            
-            # Warn if query was slow
-            if query_duration > 10:
-                logger.warning(f"⚠️ Slow time range query for {ship_id}: {query_duration:.2f}s - consider adding indexes")
-            
-            return (min_time, max_time)
-            
-        except Exception as e:
-            end_query_time = time_module.time()
-            query_duration = end_query_time - start_query_time
-            logger.error(f"❌ Error getting data time range for {ship_id} after {query_duration:.2f}s: {e}")
-            raise
     
     def migrate_chunk(
         self, 
