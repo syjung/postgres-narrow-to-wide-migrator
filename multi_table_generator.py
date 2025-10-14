@@ -197,11 +197,15 @@ class MultiTableGenerator:
         채널 ID를 컬럼명으로 변환
         
         Args:
-            channel: 채널 ID (예: hs4sd_v1/ab/fuel/oil///use)
+            channel: 채널 ID (예: /hs4sd_v1/ab/fuel/oil///use)
             
         Returns:
             컬럼명 (예: hs4sd_v1_ab_fuel_oil_use)
         """
+        # Remove leading / if exists
+        if channel.startswith('/'):
+            channel = channel[1:]
+        
         # / 를 _ 로 변경
         col_name = channel.replace('/', '_')
         
