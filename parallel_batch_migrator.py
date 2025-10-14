@@ -339,9 +339,9 @@ class ParallelBatchMigrator:
             
             if self.use_multi_table:
                 result['tables'] = [
-                    f"auxiliary_systems_{ship_id.lower()}",
-                    f"engine_generator_{ship_id.lower()}",
-                    f"navigation_ship_{ship_id.lower()}"
+                    f"tbl_1_{ship_id.lower()}",
+                    f"tbl_2_{ship_id.lower()}",
+                    f"tbl_3_{ship_id.lower()}"
                 ]
             else:
                 result['table_name'] = f'tbl_data_timeseries_{ship_id.upper()}'

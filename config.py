@@ -50,14 +50,14 @@ class MigrationConfig(BaseSettings):
     # Multi-Table configuration
     use_multi_table: bool = True  # Enable multi-table mode
     channel_files: ClassVar[dict] = {
-        'auxiliary': 'column_list_auxiliary_systems.txt',
-        'engine': 'column_list_engine_generator.txt',
-        'navigation': 'column_list_navigation_ship.txt'
+        '1': 'column_list_auxiliary_systems.txt',
+        '2': 'column_list_engine_generator.txt',
+        '3': 'column_list_navigation_ship.txt'
     }
     table_name_patterns: ClassVar[dict] = {
-        'auxiliary': 'auxiliary_systems_{ship_id}',
-        'engine': 'engine_generator_{ship_id}',
-        'navigation': 'navigation_ship_{ship_id}'
+        '1': 'tbl_1_{ship_id}',
+        '2': 'tbl_2_{ship_id}',
+        '3': 'tbl_3_{ship_id}'
     }
     
     # Performance optimization settings

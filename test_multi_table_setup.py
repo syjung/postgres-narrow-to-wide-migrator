@@ -97,9 +97,9 @@ def test_channel_router():
         
         # 샘플 채널 테스트
         test_channels = [
-            ("hs4sd_v1/ab/fuel/oil///use", "auxiliary_systems"),
-            ("hs4sd_v1/me01/////run", "engine_generator"),
-            ("hs4sd_v1/ship////aft_m/draft", "navigation_ship"),
+            ("/hs4sd_v1/ab/fuel/oil///use", "1"),
+            ("/hs4sd_v1/me01/////run", "2"),
+            ("/hs4sd_v1/ship////aft_m/draft", "3"),
         ]
         
         print(f"\n   Sample routing tests:")
@@ -165,9 +165,9 @@ def test_table_names():
         test_ship_id = "IMO9976903"
         
         expected_tables = [
-            f"auxiliary_systems_{test_ship_id.lower()}",
-            f"engine_generator_{test_ship_id.lower()}",
-            f"navigation_ship_{test_ship_id.lower()}"
+            f"tbl_1_{test_ship_id.lower()}",
+            f"tbl_2_{test_ship_id.lower()}",
+            f"tbl_3_{test_ship_id.lower()}"
         ]
         
         print(f"   Ship ID: {test_ship_id}")

@@ -31,26 +31,26 @@ class MultiTableGenerator:
             success = True
             tables_created = 0
             
-            # 1. Auxiliary Systems
-            created = self.create_auxiliary_systems_table(ship_id)
+            # 1. tbl_1 (Auxiliary Systems)
+            created = self.create_table_1(ship_id)
             if not created:
-                logger.error(f"❌ Failed to create auxiliary_systems table for {ship_id}")
+                logger.error(f"❌ Failed to create tbl_1 table for {ship_id}")
                 success = False
             elif created == "created":  # 새로 생성됨
                 tables_created += 1
             
-            # 2. Engine Generator
-            created = self.create_engine_generator_table(ship_id)
+            # 2. tbl_2 (Engine Generator)
+            created = self.create_table_2(ship_id)
             if not created:
-                logger.error(f"❌ Failed to create engine_generator table for {ship_id}")
+                logger.error(f"❌ Failed to create tbl_2 table for {ship_id}")
                 success = False
             elif created == "created":  # 새로 생성됨
                 tables_created += 1
             
-            # 3. Navigation Ship
-            created = self.create_navigation_ship_table(ship_id)
+            # 3. tbl_3 (Navigation Ship)
+            created = self.create_table_3(ship_id)
             if not created:
-                logger.error(f"❌ Failed to create navigation_ship table for {ship_id}")
+                logger.error(f"❌ Failed to create tbl_3 table for {ship_id}")
                 success = False
             elif created == "created":  # 새로 생성됨
                 tables_created += 1
@@ -71,9 +71,9 @@ class MultiTableGenerator:
             logger.error(f"❌ Failed to ensure tables for {ship_id}: {e}")
             return False
     
-    def create_auxiliary_systems_table(self, ship_id: str) -> bool:
+    def create_table_1(self, ship_id: str) -> bool:
         """
-        보조 시스템 테이블 생성
+        테이블 1 생성 (Auxiliary Systems)
         
         Args:
             ship_id: 선박 ID
@@ -81,16 +81,16 @@ class MultiTableGenerator:
         Returns:
             성공 여부
         """
-        table_name = f"auxiliary_systems_{ship_id.lower()}"
+        table_name = f"tbl_1_{ship_id.lower()}"
         channels = self.channel_router.get_all_channels_by_table(
             self.channel_router.TABLE_AUXILIARY
         )
         
-        return self._create_table(table_name, channels, "Auxiliary Systems")
+        return self._create_table(table_name, channels, "tbl_1 (Auxiliary Systems)")
     
-    def create_engine_generator_table(self, ship_id: str) -> bool:
+    def create_table_2(self, ship_id: str) -> bool:
         """
-        엔진/발전기 테이블 생성
+        테이블 2 생성 (Engine/Generator)
         
         Args:
             ship_id: 선박 ID
@@ -98,16 +98,16 @@ class MultiTableGenerator:
         Returns:
             성공 여부
         """
-        table_name = f"engine_generator_{ship_id.lower()}"
+        table_name = f"tbl_2_{ship_id.lower()}"
         channels = self.channel_router.get_all_channels_by_table(
             self.channel_router.TABLE_ENGINE
         )
         
-        return self._create_table(table_name, channels, "Engine Generator")
+        return self._create_table(table_name, channels, "tbl_2 (Engine/Generator)")
     
-    def create_navigation_ship_table(self, ship_id: str) -> bool:
+    def create_table_3(self, ship_id: str) -> bool:
         """
-        항해/선박정보 테이블 생성
+        테이블 3 생성 (Navigation/Ship)
         
         Args:
             ship_id: 선박 ID
@@ -115,12 +115,12 @@ class MultiTableGenerator:
         Returns:
             성공 여부
         """
-        table_name = f"navigation_ship_{ship_id.lower()}"
+        table_name = f"tbl_3_{ship_id.lower()}"
         channels = self.channel_router.get_all_channels_by_table(
             self.channel_router.TABLE_NAVIGATION
         )
         
-        return self._create_table(table_name, channels, "Navigation Ship")
+        return self._create_table(table_name, channels, "tbl_3 (Navigation/Ship)")
     
     def _create_table(self, table_name: str, channels: Set[str], description: str):
         """
@@ -236,9 +236,9 @@ class MultiTableGenerator:
         
         # 3개 테이블에 대해 인덱스 생성
         tables = [
-            f"auxiliary_systems_{ship_id.lower()}",
-            f"engine_generator_{ship_id.lower()}",
-            f"navigation_ship_{ship_id.lower()}"
+            f"tbl_1_{ship_id.lower()}",
+            f"tbl_2_{ship_id.lower()}",
+            f"tbl_3_{ship_id.lower()}"
         ]
         
         indexes_created = 0
@@ -306,9 +306,9 @@ class MultiTableGenerator:
         logger.warning(f"⚠️ Dropping all tables for ship: {ship_id}")
         
         tables = [
-            f"auxiliary_systems_{ship_id.lower()}",
-            f"engine_generator_{ship_id.lower()}",
-            f"navigation_ship_{ship_id.lower()}"
+            f"tbl_1_{ship_id.lower()}",
+            f"tbl_2_{ship_id.lower()}",
+            f"tbl_3_{ship_id.lower()}"
         ]
         
         success = True
@@ -334,9 +334,9 @@ class MultiTableGenerator:
             테이블 정보 딕셔너리
         """
         tables = [
-            f"auxiliary_systems_{ship_id.lower()}",
-            f"engine_generator_{ship_id.lower()}",
-            f"navigation_ship_{ship_id.lower()}"
+            f"tbl_1_{ship_id.lower()}",
+            f"tbl_2_{ship_id.lower()}",
+            f"tbl_3_{ship_id.lower()}"
         ]
         
         info = {

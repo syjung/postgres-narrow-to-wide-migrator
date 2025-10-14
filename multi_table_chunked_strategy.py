@@ -122,7 +122,7 @@ class MultiTableChunkedStrategy:
             insert_summary = {}
             
             for table_type in self.channel_router.get_all_table_types():
-                table_name = f"{table_type}_{ship_id.lower()}"
+                table_name = f"tbl_{table_type}_{ship_id.lower()}"
                 
                 # Filter data for this table
                 filter_start = time_module.time()
@@ -154,9 +154,9 @@ class MultiTableChunkedStrategy:
             
             # Summary log
             thread_logger.success(f"📊 Chunk completed: {len(chunk_data)} narrow records → {total_inserted} wide records inserted")
-            thread_logger.info(f"   └─ auxiliary_systems: {insert_summary.get('auxiliary_systems', 0)} rows")
-            thread_logger.info(f"   └─ engine_generator: {insert_summary.get('engine_generator', 0)} rows")
-            thread_logger.info(f"   └─ navigation_ship: {insert_summary.get('navigation_ship', 0)} rows")
+            thread_logger.info(f"   └─ tbl_1 (auxiliary): {insert_summary.get('1', 0)} rows")
+            thread_logger.info(f"   └─ tbl_2 (engine): {insert_summary.get('2', 0)} rows")
+            thread_logger.info(f"   └─ tbl_3 (navigation): {insert_summary.get('3', 0)} rows")
             
             return {
                 'status': 'completed',

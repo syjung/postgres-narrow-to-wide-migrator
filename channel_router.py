@@ -10,10 +10,10 @@ from loguru import logger
 class ChannelRouter:
     """채널을 시스템 타입별로 라우팅하는 클래스"""
     
-    # 테이블 타입 상수
-    TABLE_AUXILIARY = "auxiliary_systems"
-    TABLE_ENGINE = "engine_generator"
-    TABLE_NAVIGATION = "navigation_ship"
+    # 테이블 타입 상수 (숫자로 간단화)
+    TABLE_AUXILIARY = "1"
+    TABLE_ENGINE = "2"
+    TABLE_NAVIGATION = "3"
     
     def __init__(self, 
                  auxiliary_file: str = "column_list_auxiliary_systems.txt",
@@ -127,16 +127,13 @@ class ChannelRouter:
         채널이 속한 테이블 타입 반환
         
         Args:
-            channel_id: 채널 ID
+            channel_id: 채널 ID (예: /hs4sd_v1/ab/fuel/oil///use)
             
         Returns:
-            테이블 타입 ('auxiliary_systems', 'engine_generator', 'navigation_ship')
+            테이블 타입 ('1', '2', '3')
             또는 None (알 수 없는 채널)
         """
-        # 앞에 / 있으면 제거
-        if channel_id.startswith('/'):
-            channel_id = channel_id[1:]
-        
+        # 채널 ID를 파일에 저장된 그대로 사용 (슬래시 포함)
         return self._channel_to_table.get(channel_id)
     
     def get_table_name(self, channel_id: str, ship_id: str) -> Optional[str]:
@@ -148,13 +145,13 @@ class ChannelRouter:
             ship_id: 선박 ID
             
         Returns:
-            테이블명 (예: 'auxiliary_systems_imo9976903')
+            테이블명 (예: 'tbl_1_imo9976903')
         """
         table_type = self.get_table_type(channel_id)
         if table_type is None:
             return None
         
-        return f"{table_type}_{ship_id.lower()}"
+        return f"tbl_{table_type}_{ship_id.lower()}"
     
     def filter_channels_by_table(self, channels: List[str], table_type: str) -> List[str]:
         """
