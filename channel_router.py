@@ -193,6 +193,10 @@ class ChannelRouter:
         """모든 테이블 타입 반환"""
         return [self.TABLE_AUXILIARY, self.TABLE_ENGINE, self.TABLE_NAVIGATION]
     
+    def get_all_channels(self) -> Set[str]:
+        """모든 유효한 채널 ID 반환"""
+        return set(self._channel_to_table.keys())
+    
     def get_channel_count_by_table(self) -> Dict[str, int]:
         """테이블별 채널 수 반환"""
         return {
