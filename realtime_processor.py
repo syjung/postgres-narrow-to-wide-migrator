@@ -575,8 +575,20 @@ class RealTimeProcessor:
         all_timestamps = sorted(grouped_data.keys())
         thread_logger.info(f"   📅 All timestamps in batch: {[ts.strftime('%H:%M:%S') for ts in all_timestamps]}")
         
+        # Clean up old processed timestamps (keep only last 2 minutes)
+        # This prevents memory buildup and allows reprocessing if needed
+        cutoff_for_cleanup = datetime.now() - timedelta(minutes=2)
+        old_count = len(self.processed_timestamps)
+        self.processed_timestamps = {
+            ts for ts in self.processed_timestamps 
+            if ts > cutoff_for_cleanup
+        }
+        cleaned_count = old_count - len(self.processed_timestamps)
+        if cleaned_count > 0:
+            thread_logger.debug(f"   🧹 Cleaned {cleaned_count} old timestamps from cache (kept {len(self.processed_timestamps)})")
+        
         for timestamp, channels in grouped_data.items():
-            # Skip if already processed
+            # Skip if already processed (within last 2 minutes)
             if timestamp in self.processed_timestamps:
                 thread_logger.warning(f"   ⏭️ Skipping already processed timestamp: {timestamp} ({len(channels)} channels)")
                 continue
