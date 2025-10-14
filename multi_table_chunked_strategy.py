@@ -22,18 +22,22 @@ class MultiTableChunkedStrategy:
         self.batch_size = migration_config.batch_size
         self.channel_router = channel_router
     
-    def get_data_chunks(self, ship_id: str, cutoff_time: Optional[datetime] = None) -> List[Tuple[datetime, datetime]]:
+    def get_data_chunks(self, ship_id: str, cutoff_time: Optional[datetime] = None, thread_logger=None) -> List[Tuple[datetime, datetime]]:
         """
         시간 범위를 청크로 분할 (고정 시간 범위 사용 - DB 쿼리 없이 빠름!)
         
         Args:
             ship_id: 선박 ID
             cutoff_time: 마이그레이션 종료 시간
+            thread_logger: 스레드 전용 로거
             
         Returns:
             (start_time, end_time) 튜플의 리스트
         """
-        logger.info(f"🔍 Getting data chunks for {ship_id} (cutoff: {cutoff_time})")
+        if thread_logger is None:
+            thread_logger = get_ship_thread_logger(ship_id)
+        
+        thread_logger.info(f"🔍 Getting data chunks for {ship_id} (cutoff: {cutoff_time})")
         
         # 고정 시간 범위 사용 (DB 쿼리 없이 즉시 생성!)
         if cutoff_time:
@@ -45,8 +49,8 @@ class MultiTableChunkedStrategy:
         lookback_days = migration_config.batch_lookback_days
         start_time = end_time - timedelta(days=lookback_days)
         
-        logger.info(f"📅 Using fixed time range: {start_time} to {end_time}")
-        logger.info(f"📅 Processing {lookback_days} days of data (configurable in config.py)")
+        thread_logger.info(f"📅 Using fixed time range: {start_time} to {end_time}")
+        thread_logger.info(f"📅 Processing {lookback_days} days of data (configurable in config.py)")
         
         # Generate chunks
         chunks = []
@@ -60,7 +64,7 @@ class MultiTableChunkedStrategy:
             chunks.append((current_start, current_end))
             current_start = current_end
         
-        logger.info(f"📊 Generated {len(chunks)} chunks ({self.chunk_size_hours}-hour chunks)")
+        thread_logger.info(f"📊 Generated {len(chunks)} chunks ({self.chunk_size_hours}-hour chunks)")
         return chunks
     
     def migrate_chunk(

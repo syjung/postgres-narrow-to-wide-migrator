@@ -262,7 +262,7 @@ class ParallelBatchMigrator:
             start_migration_time = time.time()
             
             # Get data chunks
-            chunks = list(self.migration_strategy.get_data_chunks(ship_id, cutoff_time))
+            chunks = list(self.migration_strategy.get_data_chunks(ship_id, cutoff_time, thread_logger))
             total_chunks = len(chunks)
             thread_logger.info(f"📊 Found {total_chunks} chunks to process")
             
