@@ -602,7 +602,7 @@ class RealTimeProcessor:
                         thread_logger.debug(f"      ✅ In DB - safe to skip")
                     else:
                         thread_logger.warning(f"      ⚠️ NOT in DB - reprocessing {timestamp}")
-                        self.processed_timestamps.remove(timestamp)
+                        self.processed_timestamps.discard(timestamp)  # discard() doesn't raise KeyError
                         should_skip = False
                 
                 if should_skip:
