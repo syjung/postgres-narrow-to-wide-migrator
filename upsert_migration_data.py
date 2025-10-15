@@ -43,9 +43,10 @@ logger.add(
 class CSVMigrationUpserter:
     """CSV 파일을 읽어서 wide 테이블에 upsert하는 클래스"""
     
-    def __init__(self, base_dir: str = "migration_data"):
+    def __init__(self, base_dir: str = "migration_data", dry_run: bool = False):
         self.base_dir = Path(base_dir)
         self.channel_router = channel_router
+        self.dry_run = dry_run
         self.stats = {
             'total_files': 0,
             'processed_files': 0,
@@ -54,6 +55,9 @@ class CSVMigrationUpserter:
             'inserted_rows': 0,
             'updated_rows': 0
         }
+        
+        if dry_run:
+            logger.warning("🔍 DRY-RUN MODE: No data will be inserted into DB")
     
     def process_all_ships(self):
         """모든 선박의 CSV 파일 처리"""
@@ -94,6 +98,17 @@ class CSVMigrationUpserter:
         
         logger.info(f"   📊 Found {len(csv_files)} CSV files")
         
+        # 테이블 존재 확인 (Dry-run이 아닐 때만)
+        if not self.dry_run:
+            logger.info(f"   🔍 Checking if tables exist for {imo_number}...")
+            for table_type in ['1', '2', '3']:
+                table_name = f"tbl_data_timeseries_{imo_number.lower()}_{table_type}"
+                if not db_manager.check_table_exists(table_name):
+                    logger.error(f"   ❌ Table does not exist: {table_name}")
+                    logger.error(f"   💡 Run Realtime or Batch first to create tables, or use multi_table_generator")
+                    raise RuntimeError(f"Table {table_name} does not exist")
+            logger.info(f"   ✅ All 3 tables exist")
+        
         for csv_file in csv_files:
             try:
                 self.process_csv_file(csv_file, imo_number)
@@ -122,6 +137,17 @@ class CSVMigrationUpserter:
             # 채널을 테이블별로 분류
             channels_by_table = self.classify_channels(channel_ids)
             
+            # 매칭된 채널 총 수 확인
+            total_matched = sum(len(chs) for chs in channels_by_table.values())
+            if total_matched == 0:
+                logger.error(f"      ❌ No channels matched! All {len(channel_ids)} channels are unknown.")
+                logger.error(f"         Sample unmapped channels: {channel_ids[:5]}")
+                raise ValueError(f"No channels matched for {csv_file.name}")
+            
+            if total_matched < len(channel_ids):
+                unmapped_count = len(channel_ids) - total_matched
+                logger.warning(f"      ⚠️ {unmapped_count}/{len(channel_ids)} channels not mapped (will be skipped)")
+            
             # 테이블별 통계
             for table_type, channels in channels_by_table.items():
                 logger.info(f"      - Table {table_type}: {len(channels)} channels")
@@ -147,20 +173,30 @@ class CSVMigrationUpserter:
                 
                 # 테이블별로 데이터 준비
                 for table_type, table_channels in channels_by_table.items():
+                    # 이 테이블에 매칭되는 채널이 없으면 skip
+                    if not table_channels:
+                        continue
+                    
                     row_data = {'created_time': timestamp}
+                    has_valid_data = False
                     
                     for channel_id in table_channels:
                         value_str = row.get(channel_id, '')
                         if value_str and value_str.strip():
                             try:
-                                row_data[channel_id] = float(value_str)
+                                value = float(value_str)
+                                row_data[channel_id] = value
+                                has_valid_data = True  # 유효한 데이터가 하나라도 있음
                             except ValueError:
                                 # 변환 실패 시 None
                                 row_data[channel_id] = None
                         else:
                             row_data[channel_id] = None
                     
-                    batch_data[table_type].append(row_data)
+                    # 유효한 데이터가 하나라도 있을 때만 추가
+                    # (created_time만 있는 빈 row 방지)
+                    if has_valid_data:
+                        batch_data[table_type].append(row_data)
                 
                 rows_processed += 1
                 
@@ -211,6 +247,12 @@ class CSVMigrationUpserter:
         if not rows:
             return
         
+        # Dry-run 모드
+        if self.dry_run:
+            self.stats['inserted_rows'] += len(rows)
+            logger.debug(f"         🔍 [DRY-RUN] Would upsert {len(rows)} rows to {table_name}")
+            return
+        
         # SQL 쿼리 생성
         # 컬럼명 quoting (특수문자 포함)
         quoted_columns = [f'"{col}"' for col in channel_list]
@@ -256,6 +298,7 @@ class CSVMigrationUpserter:
             
         except Exception as e:
             logger.error(f"         ❌ Upsert failed for {table_name}: {e}")
+            logger.error(f"         Sample row: {rows[0] if rows else 'N/A'}")
             if 'conn' in locals():
                 conn.rollback()
                 db_manager.return_connection(conn)
@@ -290,11 +333,16 @@ def main():
         type=str,
         help='Process only specific ship code (e.g., H2546)'
     )
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Dry-run mode: check files and channels without inserting data'
+    )
     
     args = parser.parse_args()
     
     try:
-        upserter = CSVMigrationUpserter(base_dir=args.dir)
+        upserter = CSVMigrationUpserter(base_dir=args.dir, dry_run=args.dry_run)
         
         if args.ship:
             # 특정 선박만 처리
