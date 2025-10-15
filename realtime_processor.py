@@ -587,25 +587,22 @@ class RealTimeProcessor:
         for timestamp, channels in grouped_data.items():
             # Skip if already processed (within last 2 minutes)
             if timestamp in self.processed_timestamps:
-                thread_logger.debug(f"   ⏭️ Skipping cached timestamp: {timestamp}")
+                thread_logger.debug(f"   ⏭️ Cached timestamp: {timestamp}")
                 
                 # ✅ Verify it actually exists in DB (safety check)
+                should_skip = True
                 if self.use_multi_table:
                     sample_table = f"tbl_data_timeseries_{ship_id.lower()}_1"
                     check_query = f"SELECT COUNT(*) as cnt FROM tenant.{sample_table} WHERE created_time = %s"
                     check_result = db_manager.execute_query(check_query, (timestamp,))
                     if check_result and check_result[0]['cnt'] > 0:
-                        thread_logger.debug(f"      ✅ Verified in DB")
+                        thread_logger.debug(f"      ✅ In DB - safe to skip")
                     else:
-                        thread_logger.warning(f"      ⚠️ NOT in DB but in cache - reprocessing {timestamp}")
-                        self.processed_timestamps.remove(timestamp)  # Remove and reprocess
-                        # Continue to process below (don't skip)
-                else:
-                    thread_logger.debug(f"      Skipped based on cache")
-                    continue
+                        thread_logger.warning(f"      ⚠️ NOT in DB - reprocessing {timestamp}")
+                        self.processed_timestamps.remove(timestamp)
+                        should_skip = False
                 
-                # If we didn't continue above (DB check failed), process normally
-                if timestamp in self.processed_timestamps:
+                if should_skip:
                     continue
             
             thread_logger.debug(f"   🔄 Processing timestamp {timestamp}: {len(channels)} channels")
