@@ -5,7 +5,7 @@ migration_data 폴더의 CSV 파일들을 읽어서 3개의 wide 테이블에 up
 import os
 import csv
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from loguru import logger
 import sys
@@ -131,22 +131,23 @@ class CSVMigrationUpserter:
             if not fieldnames or 'timestamp' not in fieldnames:
                 raise ValueError(f"Invalid CSV format: missing 'timestamp' column")
             
-            channel_ids = [col for col in fieldnames if col != 'timestamp']
-            logger.info(f"      📊 Columns: {len(channel_ids)} channels")
+            # 원본 채널 ID (CSV 헤더 그대로)
+            channel_ids_original = [col for col in fieldnames if col != 'timestamp']
+            logger.info(f"      📊 Columns: {len(channel_ids_original)} channels")
             
-            # 채널을 테이블별로 분류
-            channels_by_table = self.classify_channels(channel_ids)
+            # 채널을 테이블별로 분류 (normalize된 ID 사용)
+            channels_by_table, channel_mapping = self.classify_channels(channel_ids_original)
             
             # 매칭된 채널 총 수 확인
             total_matched = sum(len(chs) for chs in channels_by_table.values())
             if total_matched == 0:
-                logger.error(f"      ❌ No channels matched! All {len(channel_ids)} channels are unknown.")
-                logger.error(f"         Sample unmapped channels: {channel_ids[:5]}")
+                logger.error(f"      ❌ No channels matched! All {len(channel_ids_original)} channels are unknown.")
+                logger.error(f"         Sample unmapped channels: {channel_ids_original[:5]}")
                 raise ValueError(f"No channels matched for {csv_file.name}")
             
-            if total_matched < len(channel_ids):
-                unmapped_count = len(channel_ids) - total_matched
-                logger.warning(f"      ⚠️ {unmapped_count}/{len(channel_ids)} channels not mapped (will be skipped)")
+            if total_matched < len(channel_ids_original):
+                unmapped_count = len(channel_ids_original) - total_matched
+                logger.warning(f"      ⚠️ {unmapped_count}/{len(channel_ids_original)} channels not mapped (will be skipped)")
             
             # 테이블별 통계
             for table_type, channels in channels_by_table.items():
@@ -180,18 +181,23 @@ class CSVMigrationUpserter:
                     row_data = {'created_time': timestamp}
                     has_valid_data = False
                     
-                    for channel_id in table_channels:
-                        value_str = row.get(channel_id, '')
+                    for normalized_channel_id in table_channels:
+                        # CSV의 원본 컬럼명으로 조회 (매핑 사용!)
+                        original_channel_id = channel_mapping[normalized_channel_id]
+                        value_str = row.get(original_channel_id, '')
+                        
                         if value_str and value_str.strip():
                             try:
                                 value = float(value_str)
-                                row_data[channel_id] = value
+                                # DB에는 normalized ID를 컬럼명으로 사용
+                                row_data[normalized_channel_id] = value
                                 has_valid_data = True  # 유효한 데이터가 하나라도 있음
                             except ValueError:
                                 # 변환 실패 시 None
-                                row_data[channel_id] = None
+                                logger.debug(f"         ⚠️ Failed to convert '{value_str}' to float for {normalized_channel_id}")
+                                row_data[normalized_channel_id] = None
                         else:
-                            row_data[channel_id] = None
+                            row_data[normalized_channel_id] = None
                     
                     # 유효한 데이터가 하나라도 있을 때만 추가
                     # (created_time만 있는 빈 row 방지)
@@ -213,22 +219,47 @@ class CSVMigrationUpserter:
             self.stats['total_rows'] += rows_processed
             logger.success(f"      ✅ Completed: {rows_processed} rows processed")
     
-    def classify_channels(self, channel_ids: List[str]) -> Dict[str, List[str]]:
-        """채널을 테이블별로 분류"""
+    def classify_channels(self, channel_ids: List[str]) -> Tuple[Dict[str, List[str]], Dict[str, str]]:
+        """
+        채널을 테이블별로 분류
+        
+        Returns:
+            (channels_by_table, channel_mapping)
+            - channels_by_table: 테이블별 normalized 채널 리스트
+            - channel_mapping: normalized_id -> original_id 매핑
+        """
         channels_by_table = {
             '1': [],  # auxiliary_systems
             '2': [],  # engine_generator
             '3': []   # navigation_ship
         }
         
-        for channel_id in channel_ids:
-            table_type = self.channel_router.get_table_type(channel_id)
-            if table_type:
-                channels_by_table[table_type].append(channel_id)
-            else:
-                logger.debug(f"         ⚠️ Channel not mapped: {channel_id}")
+        # Normalized -> Original 매핑
+        channel_mapping = {}
+        unmapped_channels = []
         
-        return channels_by_table
+        for original_id in channel_ids:
+            # 공백 제거 및 normalize (중요!)
+            normalized_id = original_id.strip()
+            
+            table_type = self.channel_router.get_table_type(normalized_id)
+            if table_type:
+                channels_by_table[table_type].append(normalized_id)
+                # 매핑 저장: normalized -> original (CSV 조회용)
+                channel_mapping[normalized_id] = original_id
+            else:
+                unmapped_channels.append(original_id)
+        
+        # Unmapped channels 상세 로그
+        if unmapped_channels:
+            logger.warning(f"         ⚠️ {len(unmapped_channels)} unmapped channels (will be skipped):")
+            # 처음 10개만 샘플로 표시
+            for ch in unmapped_channels[:10]:
+                logger.warning(f"            - '{ch}'")
+            if len(unmapped_channels) > 10:
+                logger.warning(f"            ... and {len(unmapped_channels) - 10} more")
+        
+        return channels_by_table, channel_mapping
     
     def upsert_batch_data(self, imo_number: str, batch_data: Dict[str, List[Dict]], 
                           channels_by_table: Dict[str, List[str]]):
