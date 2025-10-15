@@ -56,6 +56,9 @@ class CSVMigrationUpserter:
             'updated_rows': 0
         }
         
+        # 테이블 컬럼 수 캐시 (테이블명 -> 컬럼 수)
+        self.table_column_count_cache: Dict[str, int] = {}
+        
         if dry_run:
             logger.warning("🔍 DRY-RUN MODE: No data will be inserted into DB")
     
@@ -108,6 +111,9 @@ class CSVMigrationUpserter:
                     logger.error(f"   💡 Run Realtime or Batch first to create tables, or use multi_table_generator")
                     raise RuntimeError(f"Table {table_name} does not exist")
             logger.info(f"   ✅ All 3 tables exist")
+            
+            # 테이블 컬럼 개수 확인 및 경고
+            self.check_table_columns(imo_number)
         
         for csv_file in csv_files:
             try:
@@ -149,9 +155,25 @@ class CSVMigrationUpserter:
                 unmapped_count = len(channel_ids_original) - total_matched
                 logger.warning(f"      ⚠️ {unmapped_count}/{len(channel_ids_original)} channels not mapped (will be skipped)")
             
-            # 테이블별 통계
+            # 테이블별 통계 및 Coverage 확인
             for table_type, channels in channels_by_table.items():
-                logger.info(f"      - Table {table_type}: {len(channels)} channels")
+                if channels:
+                    # 테이블의 전체 컬럼 수 조회
+                    table_name = f"tbl_data_timeseries_{imo_number.lower()}_{table_type}"
+                    table_col_count = self.get_table_column_count(table_name)
+                    
+                    csv_col_count = len(channels)
+                    coverage = (csv_col_count / table_col_count * 100) if table_col_count > 0 else 0
+                    
+                    logger.info(f"      - Table {table_type}: {csv_col_count}/{table_col_count} channels ({coverage:.1f}% coverage)")
+                    
+                    # 경고: Coverage가 낮으면
+                    if coverage < 50 and not self.dry_run:
+                        logger.warning(f"         ⚠️ LOW COVERAGE! CSV only updates {csv_col_count}/{table_col_count} columns")
+                        logger.warning(f"         💡 Make sure Batch migration ran first to populate all columns")
+                        logger.warning(f"         💡 Or this CSV is intentionally updating only specific columns")
+                else:
+                    logger.debug(f"      - Table {table_type}: 0 channels")
             
             # 데이터 처리
             rows_processed = 0
@@ -260,6 +282,52 @@ class CSVMigrationUpserter:
                 logger.warning(f"            ... and {len(unmapped_channels) - 10} more")
         
         return channels_by_table, channel_mapping
+    
+    def get_table_column_count(self, table_name: str) -> int:
+        """
+        테이블의 데이터 컬럼 수 조회 (created_time 제외)
+        캐싱하여 반복 조회 방지
+        """
+        # 캐시 확인
+        if table_name in self.table_column_count_cache:
+            return self.table_column_count_cache[table_name]
+        
+        # Dry-run 모드에서는 0 반환
+        if self.dry_run:
+            return 0
+        
+        try:
+            query = """
+                SELECT COUNT(*) as col_count
+                FROM information_schema.columns
+                WHERE table_schema = 'tenant'
+                  AND table_name = %s
+                  AND column_name != 'created_time'
+            """
+            
+            result = db_manager.execute_query(query, (table_name,))
+            if result:
+                col_count = result[0]['col_count']
+                # 캐시 저장
+                self.table_column_count_cache[table_name] = col_count
+                return col_count
+            else:
+                return 0
+                
+        except Exception as e:
+            logger.warning(f"   ⚠️ Could not get column count for {table_name}: {e}")
+            return 0
+    
+    def check_table_columns(self, imo_number: str):
+        """테이블의 실제 컬럼 개수 확인 및 경고"""
+        try:
+            for table_type in ['1', '2', '3']:
+                table_name = f"tbl_data_timeseries_{imo_number.lower()}_{table_type}"
+                col_count = self.get_table_column_count(table_name)
+                logger.info(f"   📊 Table {table_type}: {col_count} data columns")
+                    
+        except Exception as e:
+            logger.warning(f"   ⚠️ Could not check table columns: {e}")
     
     def upsert_batch_data(self, imo_number: str, batch_data: Dict[str, List[Dict]], 
                           channels_by_table: Dict[str, List[str]]):
