@@ -155,3 +155,6 @@ Thumbs.db
 temp/
 tmp/
 cutoff_times/
+
+# Migration data (large CSV files)
+migration_data/

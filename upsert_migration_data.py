@@ -291,8 +291,14 @@ class CSVMigrationUpserter:
         if table_name in self.table_column_count_cache:
             return self.table_column_count_cache[table_name]
         
-        # Dry-run 모드에서는 0 반환
+        # Dry-run 모드에서는 channel_router에서 예상 컬럼 수 가져오기
         if self.dry_run:
+            # 테이블 타입 추출 (tbl_data_timeseries_imo9976903_1 -> '1')
+            table_type = table_name.split('_')[-1]
+            if table_type in ['1', '2', '3']:
+                col_count = len(self.channel_router.get_all_channels_by_table(table_type))
+                self.table_column_count_cache[table_name] = col_count
+                return col_count
             return 0
         
         try:
