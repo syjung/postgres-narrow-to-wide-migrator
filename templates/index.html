@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wide Table Data Exporter</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 40px;
+        }
+        
+        .form-group {
+            margin-bottom: 25px;
+        }
+        
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #333;
+            font-size: 14px;
+        }
+        
+        .form-group select,
+        .form-group input[type="number"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 15px;
+            transition: all 0.3s;
+        }
+        
+        .form-group select:focus,
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .date-inputs {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+        }
+        
+        .period-inputs {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 15px;
+        }
+        
+        .btn-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 30px;
+        }
+        
+        .btn {
+            padding: 14px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-preview {
+            background: #f0f0f0;
+            color: #333;
+        }
+        
+        .btn-preview:hover {
+            background: #e0e0e0;
+            transform: translateY(-2px);
+        }
+        
+        .btn-export {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-export:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        
+        .info-panel {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            display: none;
+        }
+        
+        .info-panel.show {
+            display: block;
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .info-panel h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .info-row:last-child {
+            border-bottom: none;
+        }
+        
+        .info-label {
+            font-weight: 600;
+            color: #666;
+        }
+        
+        .info-value {
+            color: #333;
+            font-weight: 500;
+        }
+        
+        .table-info {
+            margin-top: 15px;
+            padding: 15px;
+            background: white;
+            border-radius: 6px;
+        }
+        
+        .table-info h4 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 15px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            border-left: 4px solid #c33;
+        }
+        
+        .success {
+            background: #efe;
+            color: #3c3;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            border-left: 4px solid #3c3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚢 Wide Table Data Exporter</h1>
+            <p>선박별 데이터를 CSV로 추출</p>
+        </div>
+        
+        <div class="content">
+            <form id="exportForm">
+                <!-- 선박 선택 -->
+                <div class="form-group">
+                    <label for="ship_code">선박 선택</label>
+                    <select id="ship_code" name="ship_code" required>
+                        <option value="">선박을 선택하세요</option>
+                        {% for code, imo in ships.items() %}
+                        <option value="{{ code }}">{{ code }} ({{ imo }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <!-- 기준일자 -->
+                <div class="form-group">
+                    <label>기준일자</label>
+                    <div class="date-inputs">
+                        <div>
+                            <input type="number" id="year" name="year" placeholder="년도 (YYYY)" 
+                                   min="2020" max="2030" value="2025" required>
+                        </div>
+                        <div>
+                            <input type="number" id="month" name="month" placeholder="월 (1-12)" 
+                                   min="1" max="12" value="1" required>
+                        </div>
+                        <div>
+                            <input type="number" id="day" name="day" placeholder="일 (1-31)" 
+                                   min="1" max="31" value="1" required>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 추출 기간 -->
+                <div class="form-group">
+                    <label>추출 기간</label>
+                    <div class="period-inputs">
+                        <select id="period_type" name="period_type" required>
+                            <option value="day">일 단위</option>
+                            <option value="week">주 단위</option>
+                            <option value="month" selected>월 단위</option>
+                        </select>
+                        <input type="number" id="period_value" name="period_value" 
+                               min="1" max="12" value="1" required>
+                    </div>
+                </div>
+                
+                <!-- 버튼 -->
+                <div class="btn-group">
+                    <button type="button" class="btn btn-preview" onclick="previewData()">
+                        🔍 미리보기
+                    </button>
+                    <button type="button" class="btn btn-export" onclick="exportData()">
+                        📥 CSV 다운로드
+                    </button>
+                </div>
+            </form>
+            
+            <!-- 정보 패널 -->
+            <div id="infoPanel" class="info-panel">
+                <h3>📊 추출 정보</h3>
+                <div id="infoContent"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function getFormData() {
+            return {
+                ship_code: document.getElementById('ship_code').value,
+                year: document.getElementById('year').value,
+                month: document.getElementById('month').value,
+                day: document.getElementById('day').value,
+                period_type: document.getElementById('period_type').value,
+                period_value: document.getElementById('period_value').value
+            };
+        }
+        
+        function previewData() {
+            const formData = getFormData();
+            
+            if (!formData.ship_code) {
+                alert('선박을 선택해주세요');
+                return;
+            }
+            
+            const infoPanel = document.getElementById('infoPanel');
+            const infoContent = document.getElementById('infoContent');
+            
+            infoContent.innerHTML = '<div class="loading">데이터 정보를 가져오는 중...</div>';
+            infoPanel.classList.add('show');
+            
+            // AJAX 요청
+            fetch('/preview', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams(formData)
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(err => {
+                        throw new Error(err.error || 'Unknown error');
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                displayPreview(data);
+            })
+            .catch(error => {
+                infoContent.innerHTML = `<div class="error">❌ 에러: ${error.message}</div>`;
+            });
+        }
+        
+        function displayPreview(data) {
+            const infoContent = document.getElementById('infoContent');
+            
+            let html = `
+                <div class="info-row">
+                    <span class="info-label">파일명</span>
+                    <span class="info-value">${data.filename}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">선박</span>
+                    <span class="info-value">${data.ship_code} (${data.imo_number})</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">기간</span>
+                    <span class="info-value">${data.period}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">총 Row 수</span>
+                    <span class="info-value">${data.total_rows.toLocaleString()}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">총 Column 수</span>
+                    <span class="info-value">${data.total_columns.toLocaleString()}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">파일 크기</span>
+                    <span class="info-value">${data.file_size_mb}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">추출 시간</span>
+                    <span class="info-value">${data.extraction_time}</span>
+                </div>
+            `;
+            
+            // 테이블별 상세 정보
+            html += '<h4 style="margin-top: 20px; color: #667eea;">테이블별 상세 정보</h4>';
+            
+            for (const [tableType, tableInfo] of Object.entries(data.tables)) {
+                const tableName = {
+                    '1': 'Auxiliary Systems',
+                    '2': 'Engine/Generator',
+                    '3': 'Navigation/Ship'
+                }[tableType] || tableType;
+                
+                html += `
+                    <div class="table-info">
+                        <h4>Table ${tableType}: ${tableName}</h4>
+                        <div class="info-row">
+                            <span class="info-label">테이블명</span>
+                            <span class="info-value" style="font-size: 12px;">${tableInfo.name}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">존재 여부</span>
+                            <span class="info-value">${tableInfo.exists ? '✅ 존재' : '❌ 없음'}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Row 수</span>
+                            <span class="info-value">${tableInfo.rows.toLocaleString()}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Column 수</span>
+                            <span class="info-value">${tableInfo.columns.toLocaleString()}</span>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            infoContent.innerHTML = html;
+        }
+        
+        function exportData() {
+            const formData = getFormData();
+            
+            if (!formData.ship_code) {
+                alert('선박을 선택해주세요');
+                return;
+            }
+            
+            // Form submit (파일 다운로드)
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '/export';
+            
+            for (const [key, value] of Object.entries(formData)) {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = key;
+                input.value = value;
+                form.appendChild(input);
+            }
+            
+            document.body.appendChild(form);
+            form.submit();
+            document.body.removeChild(form);
+            
+            // 미리보기도 함께 표시
+            setTimeout(previewData, 100);
+        }
+        
+        // 페이지 로드 시 현재 날짜로 초기화
+        window.onload = function() {
+            const now = new Date();
+            document.getElementById('year').value = now.getFullYear();
+            document.getElementById('month').value = now.getMonth() + 1;
+            document.getElementById('day').value = now.getDate();
+        };
+    </script>
+</head>
+<body>
+</body>
+</html>
+
