@@ -272,11 +272,14 @@ class RealTimeProcessor:
             }
             
         except Exception as e:
+            import traceback
             thread_logger.error(f"Error processing ship {ship_id}: {e}")
+            thread_logger.error(f"Traceback: {traceback.format_exc()}")
             return {
                 'success': False,
                 'ship_id': ship_id,
-                'error': str(e)
+                'error': str(e),
+                'traceback': traceback.format_exc()
             }
     
     def _process_ship_data(self, ship_id: str, thread_logger=None):
