@@ -51,9 +51,10 @@ class CSVMigrationUpserter:
             'total_files': 0,
             'processed_files': 0,
             'failed_files': 0,
-            'total_rows': 0,
-            'inserted_rows': 0,
-            'updated_rows': 0
+            'csv_rows_read': 0,  # CSV에서 읽은 실제 row 수
+            'table_1_rows': 0,   # Table 1에 upsert된 row 수
+            'table_2_rows': 0,   # Table 2에 upsert된 row 수
+            'table_3_rows': 0,   # Table 3에 upsert된 row 수
         }
         
         # 테이블 컬럼 수 캐시 (테이블명 -> 컬럼 수)
@@ -237,8 +238,8 @@ class CSVMigrationUpserter:
             if any(batch_data.values()):
                 self.upsert_batch_data(imo_number, batch_data, channels_by_table)
             
-            self.stats['total_rows'] += rows_processed
-            logger.success(f"      ✅ Completed: {rows_processed} rows processed")
+            self.stats['csv_rows_read'] += rows_processed
+            logger.success(f"      ✅ Completed: {rows_processed} CSV rows processed")
     
     def classify_channels(self, channel_ids: List[str]) -> Tuple[Dict[str, List[str]], Dict[str, str]]:
         """
@@ -344,16 +345,26 @@ class CSVMigrationUpserter:
             table_name = f"tbl_data_timeseries_{imo_number.lower()}_{table_type}"
             channel_list = channels_by_table[table_type]
             
-            self.upsert_to_table(table_name, rows, channel_list)
+            self.upsert_to_table(table_name, rows, channel_list, table_type)
     
-    def upsert_to_table(self, table_name: str, rows: List[Dict], channel_list: List[str]):
-        """특정 테이블에 데이터 upsert"""
+    def upsert_to_table(self, table_name: str, rows: List[Dict], channel_list: List[str], table_type: str):
+        """
+        특정 테이블에 데이터 upsert
+        
+        Args:
+            table_name: 테이블명
+            rows: upsert할 row 데이터 리스트
+            channel_list: 채널 ID 리스트
+            table_type: 테이블 타입 ('1', '2', '3')
+        """
         if not rows:
             return
         
         # Dry-run 모드
         if self.dry_run:
-            self.stats['inserted_rows'] += len(rows)
+            # 테이블별 통계 업데이트
+            stat_key = f'table_{table_type}_rows'
+            self.stats[stat_key] += len(rows)
             logger.debug(f"         🔍 [DRY-RUN] Would upsert {len(rows)} rows to {table_name}")
             return
         
@@ -397,7 +408,9 @@ class CSVMigrationUpserter:
             cursor.close()
             db_manager.return_connection(conn)
             
-            self.stats['inserted_rows'] += len(rows)
+            # 테이블별 통계 업데이트
+            stat_key = f'table_{table_type}_rows'
+            self.stats[stat_key] += len(rows)
             
             # Coverage 정보와 함께 로깅
             channel_count = len(channel_list)
@@ -417,15 +430,25 @@ class CSVMigrationUpserter:
         logger.info(f"\n{'='*80}")
         logger.info("📊 UPSERT SUMMARY")
         logger.info(f"{'='*80}")
-        logger.info(f"📁 Total files found: {self.stats['total_files']}")
-        logger.info(f"✅ Successfully processed: {self.stats['processed_files']}")
-        logger.info(f"❌ Failed: {self.stats['failed_files']}")
-        logger.info(f"📊 Total rows processed: {self.stats['total_rows']:,}")
-        logger.info(f"💾 Total rows upserted: {self.stats['inserted_rows']:,}")
+        logger.info(f"📁 Files:")
+        logger.info(f"   Total found: {self.stats['total_files']}")
+        logger.info(f"   ✅ Processed: {self.stats['processed_files']}")
+        logger.info(f"   ❌ Failed: {self.stats['failed_files']}")
         logger.info(f"")
-        logger.info(f"ℹ️  UPSERT Behavior:")
-        logger.info(f"   - For EXISTING rows: CSV columns are updated, others unchanged")
-        logger.info(f"   - For NEW rows: CSV columns are filled, others set to NULL")
+        logger.info(f"📊 CSV Rows:")
+        logger.info(f"   Total read from CSV: {self.stats['csv_rows_read']:,}")
+        logger.info(f"")
+        logger.info(f"💾 DB Rows Upserted (per table):")
+        logger.info(f"   Table 1 (Auxiliary): {self.stats['table_1_rows']:,}")
+        logger.info(f"   Table 2 (Engine/Generator): {self.stats['table_2_rows']:,}")
+        logger.info(f"   Table 3 (Navigation/Ship): {self.stats['table_3_rows']:,}")
+        total_db_rows = self.stats['table_1_rows'] + self.stats['table_2_rows'] + self.stats['table_3_rows']
+        logger.info(f"   Total DB rows: {total_db_rows:,}")
+        logger.info(f"")
+        logger.info(f"ℹ️  Note:")
+        logger.info(f"   - 1 CSV row → up to 3 DB rows (one per table)")
+        logger.info(f"   - For EXISTING rows: CSV columns updated, others unchanged")
+        logger.info(f"   - For NEW rows: CSV columns filled, others set to NULL")
         logger.info(f"{'='*80}")
 
 
