@@ -679,18 +679,20 @@ class RealTimeProcessor:
         
         # Track successfully inserted timestamps
         successfully_inserted = False
+        has_data_to_insert = False
         
         # Insert data into each table
         try:
             for table_type in self.channel_router.get_all_table_types():
                 if table_data[table_type]:
+                    has_data_to_insert = True
                     table_name = f"tbl_data_timeseries_{ship_id.lower()}_{table_type}"
                     thread_logger.info(f"💾 Inserting {len(table_data[table_type])} rows into {table_name}")
                     self._insert_batch_data(table_data[table_type], table_name, thread_logger)
                 else:
                     thread_logger.debug(f"   ⏭️ No data to insert into {table_type}")
             
-            # ✅ All inserts successful - mark timestamps as processed
+            # ✅ All inserts successful (or no data to insert)
             successfully_inserted = True
             
         except Exception as e:
@@ -699,11 +701,14 @@ class RealTimeProcessor:
             raise
         
         finally:
-            # Only add to processed_timestamps if ALL inserts succeeded
-            if successfully_inserted:
+            # Only add to processed_timestamps if there was data AND all inserts succeeded
+            if successfully_inserted and has_data_to_insert:
                 for timestamp in grouped_data.keys():
                     self.processed_timestamps.add(timestamp)
                 thread_logger.info(f"   ✅ Marked {len(grouped_data)} timestamps as processed (cache size: {len(self.processed_timestamps)})")
+            elif successfully_inserted and not has_data_to_insert:
+                # No data to insert - don't mark as processed (will check again next time)
+                thread_logger.debug(f"   ⏭️ No data inserted, timestamps NOT marked as processed")
     
     def _process_batch(self, batch_data: List[Dict[str, Any]], table_name: str, thread_logger=None):
         """Process a batch of data (Legacy Single-Table mode)"""
