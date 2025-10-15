@@ -167,11 +167,10 @@ class CSVMigrationUpserter:
                     
                     logger.info(f"      - Table {table_type}: {csv_col_count}/{table_col_count} channels ({coverage:.1f}% coverage)")
                     
-                    # 경고: Coverage가 낮으면
-                    if coverage < 50 and not self.dry_run:
-                        logger.warning(f"         ⚠️ LOW COVERAGE! CSV only updates {csv_col_count}/{table_col_count} columns")
-                        logger.warning(f"         💡 Make sure Batch migration ran first to populate all columns")
-                        logger.warning(f"         💡 Or this CSV is intentionally updating only specific columns")
+                    # 정보: Coverage가 낮으면 (경고 아님, 정보)
+                    if coverage < 50 and table_col_count > 0 and not self.dry_run:
+                        unmapped_count = table_col_count - csv_col_count
+                        logger.info(f"         📊 Partial update: {unmapped_count} columns not in CSV (will be NULL for new rows, unchanged for existing rows)")
                 else:
                     logger.debug(f"      - Table {table_type}: 0 channels")
             
@@ -393,7 +392,11 @@ class CSVMigrationUpserter:
             db_manager.return_connection(conn)
             
             self.stats['inserted_rows'] += len(rows)
-            logger.debug(f"         ✅ Upserted {len(rows)} rows to {table_name}")
+            
+            # Coverage 정보와 함께 로깅
+            channel_count = len(channel_list)
+            logger.info(f"         ✅ Upserted {len(rows)} rows to {table_name}")
+            logger.info(f"            Affected columns: {channel_count} (other columns: NULL for INSERT, unchanged for UPDATE)")
             
         except Exception as e:
             logger.error(f"         ❌ Upsert failed for {table_name}: {e}")
@@ -413,6 +416,10 @@ class CSVMigrationUpserter:
         logger.info(f"❌ Failed: {self.stats['failed_files']}")
         logger.info(f"📊 Total rows processed: {self.stats['total_rows']:,}")
         logger.info(f"💾 Total rows upserted: {self.stats['inserted_rows']:,}")
+        logger.info(f"")
+        logger.info(f"ℹ️  UPSERT Behavior:")
+        logger.info(f"   - For EXISTING rows: CSV columns are updated, others unchanged")
+        logger.info(f"   - For NEW rows: CSV columns are filled, others set to NULL")
         logger.info(f"{'='*80}")
 
 
