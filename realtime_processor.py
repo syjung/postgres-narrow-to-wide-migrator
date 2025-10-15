@@ -535,7 +535,7 @@ class RealTimeProcessor:
         if thread_logger is None:
             thread_logger = get_ship_thread_logger(ship_id)
         
-        thread_logger.info(f"🔍 Processing batch: {len(batch_data)} records (Multi-Table mode)")
+        thread_logger.info(f"🔍 Processing {len(batch_data)} records → 3 tables")
         
         # Debug: Check how many channels are in channel_list
         unique_channels = set(row['data_channel_id'] for row in batch_data)
@@ -543,24 +543,21 @@ class RealTimeProcessor:
         matched_channels = unique_channels & all_allowed_channels
         unmatched_channels = unique_channels - all_allowed_channels
         
-        thread_logger.info(f"   📊 Channel analysis:")
-        thread_logger.info(f"      Total unique channels in data: {len(unique_channels)}")
-        thread_logger.info(f"      Channels in channel_list: {len(matched_channels)} ✅")
-        thread_logger.info(f"      Channels NOT in channel_list: {len(unmatched_channels)} ❌")
+        thread_logger.debug(f"   📊 Channels: {len(matched_channels)}/{len(unique_channels)} matched")
         
         if len(unmatched_channels) > 0:
-            thread_logger.warning(f"   ⚠️ {len(unmatched_channels)} channels will be filtered out!")
-            sample_unmatched = list(unmatched_channels)[:5]
-            thread_logger.warning(f"      Sample unmatched: {sample_unmatched}")
+            thread_logger.debug(f"      ⚠️ {len(unmatched_channels)} unmatched (will filter)")
+            sample_unmatched = list(unmatched_channels)[:3]
+            thread_logger.debug(f"      Sample: {sample_unmatched}")
         
         # Debug: Show sample raw data
         if len(batch_data) > 0:
             sample_raw = batch_data[0]
-            thread_logger.info(f"   🔍 Sample raw data: {sample_raw}")
+            thread_logger.debug(f"   🔍 Sample: {sample_raw}")
         
         # Group data by timestamp
         grouped_data = self._group_data_by_timestamp(batch_data)
-        thread_logger.info(f"   📊 Grouped into {len(grouped_data)} timestamps")
+        thread_logger.debug(f"   📊 Grouped into {len(grouped_data)} timestamps")
         
         # Prepare data for each table type
         table_data = {
@@ -590,7 +587,7 @@ class RealTimeProcessor:
         for timestamp, channels in grouped_data.items():
             # Skip if already processed (within last 2 minutes)
             if timestamp in self.processed_timestamps:
-                thread_logger.warning(f"   ⏭️ Skipping already processed timestamp: {timestamp} ({len(channels)} channels)")
+                thread_logger.debug(f"   ⏭️ Skipping cached timestamp: {timestamp}")
                 
                 # ✅ Verify it actually exists in DB (safety check)
                 if self.use_multi_table:
@@ -598,40 +595,37 @@ class RealTimeProcessor:
                     check_query = f"SELECT COUNT(*) as cnt FROM tenant.{sample_table} WHERE created_time = %s"
                     check_result = db_manager.execute_query(check_query, (timestamp,))
                     if check_result and check_result[0]['cnt'] > 0:
-                        thread_logger.info(f"      ✅ Verified: Row exists in DB (safe to skip)")
+                        thread_logger.debug(f"      ✅ Verified in DB")
                     else:
-                        thread_logger.error(f"      ❌ ERROR: Row NOT in DB but in processed_timestamps!")
-                        thread_logger.error(f"      This is a bug - processing anyway...")
+                        thread_logger.warning(f"      ⚠️ NOT in DB but in cache - reprocessing {timestamp}")
                         self.processed_timestamps.remove(timestamp)  # Remove and reprocess
                         # Continue to process below (don't skip)
                 else:
-                    thread_logger.info(f"      Skipped based on processed_timestamps cache")
+                    thread_logger.debug(f"      Skipped based on cache")
                     continue
                 
                 # If we didn't continue above (DB check failed), process normally
                 if timestamp in self.processed_timestamps:
                     continue
             
-            thread_logger.info(f"   🔄 Processing timestamp {timestamp}: {len(channels)} channels")
+            thread_logger.debug(f"   🔄 Processing timestamp {timestamp}: {len(channels)} channels")
             
             # Debug: Show sample raw channels
             if len(channels) > 0:
                 sample_raw = channels[0]
-                thread_logger.info(f"   🔍 Sample raw channel data: {sample_raw}")
+                thread_logger.debug(f"   🔍 Sample raw channel data: {sample_raw}")
             
             # Prepare row for each table type
             for table_type in self.channel_router.get_all_table_types():
                 table_name = f"tbl_data_timeseries_{ship_id.lower()}_{table_type}"
                 
-                # Debug: Check channel routing for this table type
+                # Debug: Check channel routing for this table type (only in DEBUG mode)
                 if len(channels) > 0:
-                    # Check first 3 channels
                     for idx, ch in enumerate(channels[:3]):
                         ch_id = ch['data_channel_id']
                         detected_type = self.channel_router.get_table_type(ch_id)
                         match_status = "✅ MATCH" if detected_type == table_type else "❌ NO MATCH"
-                        thread_logger.info(f"      🔍 Channel[{idx}]: '{ch_id}'")
-                        thread_logger.info(f"         Detected: '{detected_type}' | Expecting: '{table_type}' | {match_status}")
+                        thread_logger.debug(f"      🔍 Channel[{idx}]: '{ch_id}' → {detected_type} | Expecting: {table_type} | {match_status}")
                 
                 # Filter channels for this table
                 filtered_channels = [
@@ -639,25 +633,25 @@ class RealTimeProcessor:
                     if self.channel_router.get_table_type(ch['data_channel_id']) == table_type
                 ]
                 
-                thread_logger.info(f"      📊 Filtering: {len(channels)} total → {len(filtered_channels)} for table {table_type}")
+                thread_logger.debug(f"      📊 Filtering: {len(channels)} total → {len(filtered_channels)} for table {table_type}")
                 
                 if not filtered_channels:
-                    thread_logger.warning(f"      ⚠️ No channels matched table {table_type} at {timestamp}")
+                    thread_logger.debug(f"      ⏭️ No channels matched table {table_type} at {timestamp}")
                     
                     # Additional debug: Show what types were detected
                     detected_types = {}
                     for ch in channels[:10]:
                         dt = self.channel_router.get_table_type(ch['data_channel_id'])
                         detected_types[dt] = detected_types.get(dt, 0) + 1
-                    thread_logger.warning(f"         Types found in sample: {detected_types}")
+                    thread_logger.debug(f"         Types found in sample: {detected_types}")
                     continue
                 
-                thread_logger.info(f"      ✅ {table_type}: {len(filtered_channels)} channels at {timestamp}")
+                thread_logger.debug(f"      ✅ {table_type}: {len(filtered_channels)} channels at {timestamp}")
                 
                 # Debug: Show sample channel IDs
                 if len(filtered_channels) > 0:
                     sample_channels = [ch['data_channel_id'] for ch in filtered_channels[:3]]
-                    thread_logger.info(f"         Sample channels: {sample_channels}")
+                    thread_logger.debug(f"         Sample channels: {sample_channels}")
                 
                 # Prepare wide row
                 row_data = self._prepare_wide_row_multi_table(
@@ -671,11 +665,10 @@ class RealTimeProcessor:
                 else:
                     thread_logger.warning(f"      ⚠️ _prepare_wide_row_multi_table returned None for {table_type} ({len(filtered_channels)} channels)")
         
-        # Summary before insertion
-        thread_logger.info(f"   📊 Prepared data:")
-        for table_type in self.channel_router.get_all_table_types():
-            count = len(table_data[table_type])
-            thread_logger.info(f"      - {table_type}: {count} rows")
+        # Summary before insertion (compact format)
+        counts = {t: len(table_data[t]) for t in self.channel_router.get_all_table_types()}
+        total_rows = sum(counts.values())
+        thread_logger.info(f"   📊 Prepared {total_rows} rows: T1={counts['1']}, T2={counts['2']}, T3={counts['3']}")
         
         # Track successfully inserted timestamps
         successfully_inserted = False
@@ -683,14 +676,20 @@ class RealTimeProcessor:
         
         # Insert data into each table
         try:
+            insert_summary = []
             for table_type in self.channel_router.get_all_table_types():
                 if table_data[table_type]:
                     has_data_to_insert = True
                     table_name = f"tbl_data_timeseries_{ship_id.lower()}_{table_type}"
-                    thread_logger.info(f"💾 Inserting {len(table_data[table_type])} rows into {table_name}")
+                    row_count = len(table_data[table_type])
                     self._insert_batch_data(table_data[table_type], table_name, thread_logger)
+                    insert_summary.append(f"T{table_type}:{row_count}")
                 else:
                     thread_logger.debug(f"   ⏭️ No data to insert into {table_type}")
+            
+            # Compact INSERT summary
+            if insert_summary:
+                thread_logger.info(f"   💾 Inserted: {', '.join(insert_summary)}")
             
             # ✅ All inserts successful (or no data to insert)
             successfully_inserted = True
@@ -705,10 +704,10 @@ class RealTimeProcessor:
             if successfully_inserted and has_data_to_insert:
                 for timestamp in grouped_data.keys():
                     self.processed_timestamps.add(timestamp)
-                thread_logger.info(f"   ✅ Marked {len(grouped_data)} timestamps as processed (cache size: {len(self.processed_timestamps)})")
+                thread_logger.debug(f"   ✅ Cached {len(grouped_data)} timestamps (cache size: {len(self.processed_timestamps)})")
             elif successfully_inserted and not has_data_to_insert:
                 # No data to insert - don't mark as processed (will check again next time)
-                thread_logger.debug(f"   ⏭️ No data inserted, timestamps NOT marked as processed")
+                thread_logger.debug(f"   ⏭️ No data inserted, timestamps NOT cached")
     
     def _process_batch(self, batch_data: List[Dict[str, Any]], table_name: str, thread_logger=None):
         """Process a batch of data (Legacy Single-Table mode)"""
