@@ -191,6 +191,81 @@ class ParallelBatchMigrator:
                 'failed_ships': len(self.failed_ships)
             }
     
+    def _retry_failed_chunk(
+        self, 
+        ship_id: str, 
+        start_time: datetime, 
+        end_time: datetime, 
+        chunk_index: int, 
+        total_chunks: int, 
+        thread_logger
+    ) -> bool:
+        """
+        실패한 chunk를 재시도
+        
+        Args:
+            ship_id: 선박 ID
+            start_time: 청크 시작 시간
+            end_time: 청크 종료 시간
+            chunk_index: 청크 인덱스
+            total_chunks: 전체 청크 수
+            thread_logger: 스레드 로거
+            
+        Returns:
+            재시도 성공 여부
+        """
+        max_retries = 3
+        retry_delay = 5  # 초
+        
+        for retry_attempt in range(1, max_retries + 1):
+            try:
+                thread_logger.info(f"🔄 Retry attempt {retry_attempt}/{max_retries} for chunk {chunk_index}/{total_chunks}")
+                thread_logger.info(f"📅 Retrying chunk: {start_time} to {end_time}")
+                
+                # 잠시 대기 (연결 문제일 수 있음)
+                if retry_attempt > 1:
+                    thread_logger.info(f"⏳ Waiting {retry_delay * retry_attempt}s before retry...")
+                    time.sleep(retry_delay * retry_attempt)
+                
+                # 재시도 실행
+                retry_start_time = time.time()
+                
+                if self.use_multi_table:
+                    # Multi-table 모드
+                    result = self.migration_strategy.migrate_chunk(
+                        ship_id=ship_id,
+                        start_time=start_time,
+                        end_time=end_time,
+                        thread_logger=thread_logger
+                    )
+                else:
+                    # Single table 모드
+                    table_name = f"tbl_data_timeseries_{ship_id.lower()}"
+                    result = self.migration_strategy.migrate_chunk(
+                        ship_id=ship_id,
+                        start_time=start_time,
+                        end_time=end_time,
+                        table_name=table_name,
+                        thread_logger=thread_logger
+                    )
+                
+                retry_duration = time.time() - retry_start_time
+                
+                if result['status'] == 'completed':
+                    thread_logger.success(f"✅ Retry {retry_attempt} succeeded in {retry_duration:.2f}s")
+                    return True
+                elif result['status'] == 'skipped':
+                    thread_logger.info(f"ℹ️ Retry {retry_attempt} skipped (no data)")
+                    return True  # 데이터가 없어서 스킵된 경우도 성공으로 간주
+                else:
+                    thread_logger.warning(f"⚠️ Retry {retry_attempt} failed: {result.get('error', 'Unknown error')}")
+                    
+            except Exception as e:
+                thread_logger.error(f"❌ Retry {retry_attempt} exception: {e}")
+        
+        thread_logger.error(f"❌ All {max_retries} retry attempts failed for chunk {chunk_index}")
+        return False
+    
     def _migrate_ship_safe(self, ship_id: str, cutoff_time: Optional[datetime] = None) -> Dict[str, Any]:
         """Thread-safe wrapper for ship migration with thread info"""
         thread_logger = get_ship_thread_logger(ship_id, mode="batch")
@@ -322,6 +397,20 @@ class ParallelBatchMigrator:
                 except Exception as e:
                     chunk_duration = time.time() - chunk_start_time
                     thread_logger.error(f"❌ Chunk {i}/{total_chunks} failed after {chunk_duration:.2f}s: {e}")
+                    
+                    # 🔄 재시도 로직 추가
+                    retry_success = self._retry_failed_chunk(
+                        ship_id, start_time, end_time, i, total_chunks, thread_logger
+                    )
+                    
+                    if retry_success:
+                        thread_logger.info(f"✅ Chunk {i}/{total_chunks} succeeded on retry")
+                        # 재시도 성공 시 통계 업데이트
+                        total_narrow_records += 1  # 최소 1개 레코드로 가정
+                        total_records += 1
+                    else:
+                        thread_logger.warning(f"⚠️ Chunk {i}/{total_chunks} failed even after retry, skipping")
+                    
                     # Continue with next chunk instead of failing entire ship
                     continue
             

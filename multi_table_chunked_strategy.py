@@ -221,6 +221,7 @@ class MultiTableChunkedStrategy:
         
         # Don't use IN clause with 1037 items - it's slow!
         # Get all data for the ship/time range, filter in application
+        # ORDER BY 제거: 어차피 _transform_chunk_to_wide에서 timestamp로 grouping하므로 불필요
         query = """
         SELECT 
             created_time,
@@ -236,7 +237,6 @@ class MultiTableChunkedStrategy:
         WHERE created_time >= %s 
         AND created_time < %s
         AND ship_id = %s
-        ORDER BY created_time
         """
         
         params = (start_time, end_time, ship_id)

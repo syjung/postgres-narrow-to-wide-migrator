@@ -23,6 +23,11 @@ class DatabaseConfig(BaseSettings):
     database: str = "tenant_builder"
     user: str = "tapp"
     password: str = "tapp.123"
+    
+    # Timeout 설정 (초 단위)
+    connect_timeout: int = 30           # 연결 timeout
+    statement_timeout: int = 10800000   # 쿼리 timeout (3시간 = 10,800초)
+    idle_in_transaction_timeout: int = 600000  # 트랜잭션 idle timeout (10분)
 
     class Config:
         env_prefix = "DB_"
@@ -30,7 +35,12 @@ class DatabaseConfig(BaseSettings):
     
     @property
     def connection_string(self) -> str:
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
+        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}?connect_timeout={self.connect_timeout}"
+    
+    @property
+    def connection_options(self) -> str:
+        """PostgreSQL connection options"""
+        return f"options='-c statement_timeout={self.statement_timeout} -c idle_in_transaction_session_timeout={self.idle_in_transaction_timeout}'"
 
 
 class MigrationConfig(BaseSettings):
@@ -178,8 +188,20 @@ class LoggingConfig(BaseSettings):
     retention: str = "5 days"  # Keep logs for 30 days
 
 
+class WebExportConfig(BaseSettings):
+    """Web Export Service configuration"""
+    host: str = "0.0.0.0"
+    port: int = 8888
+    debug: bool = True
+    
+    class Config:
+        env_prefix = "WEB_"
+        case_sensitive = False
+
+
 # Global configuration instances
 db_config = DatabaseConfig()
 migration_config = MigrationConfig()
 logging_config = LoggingConfig()
+web_export_config = WebExportConfig()
 

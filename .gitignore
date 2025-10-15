@@ -121,6 +121,7 @@ dmypy.json
 # Project specific
 logs/
 *.pid
+web_export.pid
 migration_cutoff_time.txt
 *.log
 ship_*.log

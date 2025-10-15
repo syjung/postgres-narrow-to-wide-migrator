@@ -378,7 +378,14 @@ class CSVMigrationUpserter:
         placeholders = ', '.join(['%s'] * len(all_columns))
         
         # UPDATE 구문 (created_time 제외)
-        update_set = ', '.join([f'"{col}" = EXCLUDED."{col}"' for col in channel_list])
+        # NULL이 아닌 값만 UPDATE (빈 값은 기존 값 유지)
+        update_set_parts = []
+        for col in channel_list:
+            # CASE WHEN을 사용해서 NULL이 아닐 때만 업데이트
+            update_set_parts.append(
+                f'"{col}" = CASE WHEN EXCLUDED."{col}" IS NOT NULL THEN EXCLUDED."{col}" ELSE {table_name}."{col}" END'
+            )
+        update_set = ', '.join(update_set_parts)
         
         upsert_query = f"""
             INSERT INTO tenant.{table_name} ({columns_str})

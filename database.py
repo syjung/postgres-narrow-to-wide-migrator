@@ -33,15 +33,21 @@ class DatabaseManager:
         logger.info(f"   📊 DB Pool: {self.pool_config['minconn']}-{self.pool_config['maxconn']}")
     
     def _initialize_pool(self):
-        """Initialize connection pool"""
+        """Initialize connection pool with timeout settings"""
         try:
+            # Connection options for timeout
+            from config import db_config
+            
             self._pool = psycopg2.pool.ThreadedConnectionPool(
                 self.pool_config['minconn'],
                 self.pool_config['maxconn'],
                 self.connection_string,
-                cursor_factory=self.pool_config['cursor_factory']
+                cursor_factory=self.pool_config['cursor_factory'],
+                # Timeout 설정
+                options=f'-c statement_timeout={db_config.statement_timeout} -c idle_in_transaction_session_timeout={db_config.idle_in_transaction_timeout}'
             )
             logger.info(f"✅ Database connection pool initialized: {self.pool_config['minconn']}-{self.pool_config['maxconn']} connections")
+            logger.info(f"   Timeouts: statement={db_config.statement_timeout/1000:.0f}s, idle_in_tx={db_config.idle_in_transaction_timeout/1000:.0f}s")
         except psycopg2.Error as e:
             logger.error(f"❌ Failed to initialize connection pool: {e}")
             raise

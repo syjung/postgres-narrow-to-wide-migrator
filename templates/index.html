@@ -241,6 +241,10 @@
                         <option value="{{ code }}">{{ code }} ({{ imo }})</option>
                         {% endfor %}
                     </select>
+                    <div id="ship_info" style="margin-top: 10px; padding: 10px; background: #f0f4ff; border-radius: 6px; display: none; font-size: 13px; color: #666;">
+                        <div style="font-weight: 600; color: #667eea; margin-bottom: 5px;">📊 데이터 범위</div>
+                        <div id="ship_info_content"></div>
+                    </div>
                 </div>
                 
                 <!-- 기준일자 -->
@@ -262,17 +266,17 @@
                     </div>
                 </div>
                 
-                <!-- 추출 기간 -->
+                <!-- 추출 기간 (과거) -->
                 <div class="form-group">
-                    <label>추출 기간</label>
+                    <label>추출 기간 (기준일자부터 과거로)</label>
                     <div class="period-inputs">
                         <select id="period_type" name="period_type" required>
-                            <option value="day">일 단위</option>
-                            <option value="week">주 단위</option>
-                            <option value="month" selected>월 단위</option>
+                            <option value="day">일 전</option>
+                            <option value="week">주 전</option>
+                            <option value="month" selected>개월 전</option>
                         </select>
                         <input type="number" id="period_value" name="period_value" 
-                               min="1" max="12" value="1" required>
+                               min="1" max="12" value="1" required placeholder="숫자 입력">
                     </div>
                 </div>
                 
@@ -296,6 +300,9 @@
     </div>
     
     <script>
+        // 선박 데이터 범위 정보 저장
+        let shipsDataRange = {};
+        
         function getFormData() {
             return {
                 ship_code: document.getElementById('ship_code').value,
@@ -305,6 +312,76 @@
                 period_type: document.getElementById('period_type').value,
                 period_value: document.getElementById('period_value').value
             };
+        }
+        
+        // 선박 데이터 범위 로드
+        function loadShipsDataRange() {
+            fetch('/api/ships/data-range')
+                .then(response => response.json())
+                .then(data => {
+                    shipsDataRange = data;
+                    updateShipOptions();
+                })
+                .catch(error => {
+                    console.error('Failed to load ships data range:', error);
+                });
+        }
+        
+        // 선박 옵션 업데이트 (데이터 범위 포함)
+        function updateShipOptions() {
+            const select = document.getElementById('ship_code');
+            const options = select.querySelectorAll('option[value!=""]');
+            
+            options.forEach(option => {
+                const shipCode = option.value;
+                const shipInfo = shipsDataRange[shipCode];
+                
+                if (shipInfo && shipInfo.has_data) {
+                    option.text = `${shipCode} (${shipInfo.imo_number}) - ${shipInfo.min_date} ~ ${shipInfo.max_date}`;
+                    option.dataset.minDate = shipInfo.min_date;
+                    option.dataset.maxDate = shipInfo.max_date;
+                    option.dataset.rowCount = shipInfo.row_count;
+                } else {
+                    option.text = `${shipCode} (${shipInfo?.imo_number || 'Unknown'}) - 데이터 없음`;
+                    option.disabled = true;
+                }
+            });
+        }
+        
+        // 선박 선택 시 정보 표시
+        function onShipSelected() {
+            const select = document.getElementById('ship_code');
+            const shipCode = select.value;
+            const shipInfoDiv = document.getElementById('ship_info');
+            const shipInfoContent = document.getElementById('ship_info_content');
+            
+            if (!shipCode) {
+                shipInfoDiv.style.display = 'none';
+                return;
+            }
+            
+            const shipInfo = shipsDataRange[shipCode];
+            
+            if (shipInfo && shipInfo.has_data) {
+                shipInfoContent.innerHTML = `
+                    <div style="margin-bottom: 5px;">
+                        <strong>IMO:</strong> ${shipInfo.imo_number}
+                    </div>
+                    <div style="margin-bottom: 5px;">
+                        <strong>데이터 시작:</strong> ${shipInfo.min_date}
+                    </div>
+                    <div style="margin-bottom: 5px;">
+                        <strong>데이터 종료:</strong> ${shipInfo.max_date}
+                    </div>
+                    <div>
+                        <strong>총 Row 수:</strong> ${parseInt(shipInfo.row_count).toLocaleString()}
+                    </div>
+                `;
+                shipInfoDiv.style.display = 'block';
+            } else {
+                shipInfoContent.innerHTML = '<div style="color: #c33;">❌ 데이터가 없습니다</div>';
+                shipInfoDiv.style.display = 'block';
+            }
         }
         
         function previewData() {
@@ -415,7 +492,16 @@
             infoContent.innerHTML = html;
         }
         
+        // 중복 실행 방지
+        let isExporting = false;
+        
         function exportData() {
+            // 중복 실행 방지
+            if (isExporting) {
+                alert('이미 데이터를 추출 중입니다. 잠시만 기다려주세요.');
+                return;
+            }
+            
             const formData = getFormData();
             
             if (!formData.ship_code) {
@@ -423,10 +509,32 @@
                 return;
             }
             
+            // 진행상황 표시 및 버튼 비활성화
+            isExporting = true;
+            const exportButton = document.querySelector('.btn-export');
+            exportButton.disabled = true;
+            exportButton.textContent = '📥 추출 중...';
+            
+            const infoPanel = document.getElementById('infoPanel');
+            const infoContent = document.getElementById('infoContent');
+            infoContent.innerHTML = '<div class="loading">📥 데이터를 추출하는 중...<br>잠시만 기다려주세요.</div>';
+            infoPanel.classList.add('show');
+            
+            // Hidden iframe 생성 (응답 받기 위해)
+            let iframe = document.getElementById('download_iframe');
+            if (!iframe) {
+                iframe = document.createElement('iframe');
+                iframe.id = 'download_iframe';
+                iframe.name = 'download_iframe';
+                iframe.style.display = 'none';
+                document.body.appendChild(iframe);
+            }
+            
             // Form submit (파일 다운로드)
             const form = document.createElement('form');
             form.method = 'POST';
             form.action = '/export';
+            form.target = 'download_iframe';  // iframe으로 전송
             
             for (const [key, value] of Object.entries(formData)) {
                 const input = document.createElement('input');
@@ -436,20 +544,94 @@
                 form.appendChild(input);
             }
             
+            // 서버에서 생성할 request_id를 예측 (정확한 패턴 사용)
+            const requestId = `${formData.ship_code}_${Math.floor(Date.now() / 1000)}`;
+            
+            // 디버깅용 로그
+            console.log('Generated request_id:', requestId);
+            console.log('Ship code:', formData.ship_code);
+            console.log('Timestamp:', Math.floor(Date.now() / 1000));
+            
             document.body.appendChild(form);
             form.submit();
-            document.body.removeChild(form);
             
-            // 미리보기도 함께 표시
-            setTimeout(previewData, 100);
+            // 진행상황 체크 시작 (1초 지연)
+            setTimeout(() => {
+                checkExportProgress(requestId);
+            }, 1000);
+            
+            // 5초 후 form 삭제 (안전하게)
+            setTimeout(() => {
+                if (document.body.contains(form)) {
+                    document.body.removeChild(form);
+                }
+            }, 5000);
         }
         
-        // 페이지 로드 시 현재 날짜로 초기화
+        function checkExportProgress(requestId) {
+            fetch(`/api/export-progress/${requestId}`)
+                .then(response => response.json())
+                .then(data => {
+                    const infoContent = document.getElementById('infoContent');
+                    const exportButton = document.querySelector('.btn-export');
+                    
+                    if (data.status === 'starting' || data.status === 'processing') {
+                        // 진행 중
+                        infoContent.innerHTML = `<div class="loading">📥 ${data.message}<br>진행률: ${data.progress}%</div>`;
+                        // 2초 후 다시 체크
+                        setTimeout(() => checkExportProgress(requestId), 2000);
+                    } else if (data.status === 'completed') {
+                        // 완료 - 버튼 활성화
+                        isExporting = false;
+                        exportButton.disabled = false;
+                        exportButton.textContent = '📥 CSV 다운로드';
+                        infoContent.innerHTML = `<div class="success">✅ 다운로드가 완료되었습니다!<br>파일: ${data.result.filename}<br>크기: ${(data.result.file_size / 1024 / 1024).toFixed(2)} MB</div>`;
+                    } else if (data.status === 'error') {
+                        // 에러 - 버튼 활성화
+                        isExporting = false;
+                        exportButton.disabled = false;
+                        exportButton.textContent = '📥 CSV 다운로드';
+                        infoContent.innerHTML = `<div class="error">❌ ${data.message}</div>`;
+                    } else {
+                        // 알 수 없는 상태
+                        infoContent.innerHTML = '<div class="loading">📥 처리 중... (상태 확인 중)</div>';
+                        setTimeout(() => checkExportProgress(requestId), 2000);
+                    }
+                })
+                .catch(error => {
+                    console.error('Progress check error:', error);
+                    const infoContent = document.getElementById('infoContent');
+                    const exportButton = document.querySelector('.btn-export');
+                    
+                    // 네트워크 에러가 아닌 경우 (404 등) 계속 체크
+                    if (error.message && error.message.includes('404')) {
+                        console.log('Progress not found, retrying...');
+                        infoContent.innerHTML = '<div class="loading">📥 처리 중... (상태 확인 중)</div>';
+                        setTimeout(() => checkExportProgress(requestId), 3000);
+                        return;
+                    }
+                    
+                    // 실제 네트워크 에러인 경우에만 버튼 활성화
+                    isExporting = false;
+                    exportButton.disabled = false;
+                    exportButton.textContent = '📥 CSV 다운로드';
+                    
+                    infoContent.innerHTML = '<div class="error">❌ 상태 확인 중 오류가 발생했습니다. 다시 시도해주세요.</div>';
+                });
+        }
+        
+        // 페이지 로드 시 현재 날짜로 초기화 및 선박 데이터 범위 로드
         window.onload = function() {
             const now = new Date();
             document.getElementById('year').value = now.getFullYear();
             document.getElementById('month').value = now.getMonth() + 1;
             document.getElementById('day').value = now.getDate();
+            
+            // 선박 데이터 범위 로드
+            loadShipsDataRange();
+            
+            // 선박 선택 이벤트 등록
+            document.getElementById('ship_code').addEventListener('change', onShipSelected);
         };
     </script>
 </head>

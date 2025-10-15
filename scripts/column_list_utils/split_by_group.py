@@ -45,7 +45,7 @@ def main():
     print("Column List Splitter by Group")
     print("=" * 80)
     
-    input_file = "column_list_long_with_groups.txt"
+    input_file = "column_list_2562.txt"
     
     print(f"\n📂 Processing {input_file}...")
     
